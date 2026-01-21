@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Pixel } from "@/types/pixel";
+import { API_ENDPOINTS } from "@/config/api";
 
 interface PixelsResponse {
   pixels: Pixel[][];
@@ -19,7 +20,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     
-    fetch(`/api/pixels?method=${fetchMethod}`)
+    fetch(`${API_ENDPOINTS.pixels}?method=${fetchMethod}`)
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}: ${res.statusText}`);
