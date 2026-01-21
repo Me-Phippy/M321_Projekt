@@ -1,6 +1,7 @@
 # Pixelboard Applikation - M231/M321 Projekt
 
 ## 📋 Inhaltsverzeichnis
+
 - [Übersicht](#übersicht)
 - [Architektur](#architektur)
 - [Features](#features)
@@ -19,6 +20,7 @@ Diese Next.js Web-Applikation demonstriert ein verteiltes System bestehend aus F
 ### Was ist Frontend und Backend?
 
 **Backend** (Server-Side):
+
 - Läuft auf einem Webserver (Next.js API Routes)
 - Führt HTTP-Anfragen an die externe API durch
 - Verarbeitet und transformiert Daten
@@ -26,6 +28,7 @@ Diese Next.js Web-Applikation demonstriert ein verteiltes System bestehend aus F
 - Code wird auf dem Server ausgeführt
 
 **Frontend** (Client-Side):
+
 - Läuft im Browser des Benutzers
 - Rendert HTML/CSS und führt JavaScript aus
 - Interagiert mit dem DOM (Document Object Model)
@@ -113,6 +116,7 @@ API_URL=http://localhost:5085
 ### Lokalen API Server einrichten
 
 Der lokale API Server bietet folgende Vorteile:
+
 - ✅ Unabhängig von produktivem System
 - ✅ Zugriff auf Server-Logs für Debugging
 - ✅ Keine Rate-Limiting Probleme durch geteilte Ressourcen
@@ -123,6 +127,7 @@ Der lokale API Server bietet folgende Vorteile:
 **1. edu-pixelboard Repository herunterladen**
 
 Option A - Mit Git (empfohlen):
+
 ```bash
 cd C:\Users\<username>\Desktop\Module\M231
 git clone https://github.com/jakmeier/edu-pixelboard.git
@@ -131,6 +136,7 @@ git checkout no-auth
 ```
 
 Option B - ZIP Download:
+
 - Download: https://github.com/jakmeier/edu-pixelboard/archive/refs/heads/no-auth.zip
 - Entpacken nach: `C:\Users\<username>\Desktop\Module\M231\edu-pixelboard`
 
@@ -142,9 +148,10 @@ docker compose up
 ```
 
 **Warten bis alle Container gestartet sind:**
+
 ```
 ✔ Container edu-pixelboard-db-1       Started
-✔ Container edu-pixelboard-keycloak-1 Started  
+✔ Container edu-pixelboard-keycloak-1 Started
 ✔ Container edu-pixelboard-app-1      Started
 ```
 
@@ -159,6 +166,7 @@ docker compose up
 Öffne: http://localhost:5085/api/color/0/0
 
 Erwartete Antwort:
+
 ```json
 {
   "Red": 123,
@@ -192,12 +200,14 @@ docker compose ps
 ### Development Server starten
 
 **Terminal 1** - Docker (laufen lassen):
+
 ```bash
 cd C:\Users\<username>\Desktop\Module\M231\edu-pixelboard
 docker compose up
 ```
 
 **Terminal 2** - Next.js (separates Terminal):
+
 ```bash
 cd C:\Users\<username>\Desktop\Module\M231\M321_Projekt\paduk_game
 npm run dev
@@ -219,16 +229,19 @@ npm run start
 Bearbeite `.env.local`:
 
 **Lokale Entwicklung (Docker):**
+
 ```env
 API_URL=http://localhost:5085
 ```
 
 **Produktion (Online API):**
+
 ```env
 API_URL=https://edu.jakobmeier.ch
 ```
 
 **Nach Änderung:**
+
 1. Dev-Server stoppen (Ctrl+C)
 2. Neu starten: `npm run dev`
 
@@ -244,22 +257,26 @@ API_URL=https://edu.jakobmeier.ch
 ### Verwendete Endpoints
 
 **GET `/api/color/{x}/{y}`**
+
 - Ruft die Farbe eines einzelnen Pixels ab
 - Parameter: `x` (0-15), `y` (0-15)
 - Response: `{"Red": 0-255, "Green": 0-255, "Blue": 0-255}`
 
 **Swagger UI:**
+
 - Lokal: http://localhost:5085/swagger
 - Online: https://edu.jakobmeier.ch/swagger
 
 ### Backend API Routes
 
 **GET `/api/pixels?method=parallel|sequential`**
+
 - Ruft alle Pixels ab (16x16 = 256 Pixels)
 - Query Parameter:
   - `method=parallel` - Alle Pixels gleichzeitig (Standard)
   - `method=sequential` - Einer nach dem anderen
 - Response:
+
 ```json
 {
   "pixels": [[{"x": 0, "y": 0, "color": {"red": 123, "green": 45, "blue": 67}}, ...]],
@@ -297,14 +314,17 @@ paduk_game/
 ### Wichtige Dateien erklärt
 
 **Frontend:**
+
 - `index.tsx` - Hauptseite mit React-Komponenten
 - `globals.css` - Styles für Pixelboard (CSS Grid)
 
 **Backend:**
+
 - `pixels.ts` - Server-Side Logic für API-Aufrufe
 - Läuft auf dem Server, nicht im Browser
 
 **Types:**
+
 - `pixel.ts` - TypeScript Interfaces für Type Safety
 - Konvertierungsfunktionen für API-Response
 
@@ -367,54 +387,59 @@ paduk_game/
 ### Backend (Server-Side)
 
 **Sequentielle Abfrage:**
+
 ```typescript
 for (let x = 0; x < 16; x++) {
   for (let y = 0; y < 16; y++) {
-    await fetchSinglePixel(x, y);  // Wartet auf jedes Pixel
+    await fetchSinglePixel(x, y); // Wartet auf jedes Pixel
   }
 }
 // Dauer: ~10-20 Sekunden
 ```
 
 **Parallele Abfrage:**
+
 ```typescript
 const promises = [];
 for (let x = 0; x < 16; x++) {
   for (let y = 0; y < 16; y++) {
-    promises.push(fetchSinglePixel(x, y));  // Keine Wartezeit
+    promises.push(fetchSinglePixel(x, y)); // Keine Wartezeit
   }
 }
-await Promise.all(promises);  // Alle gleichzeitig
+await Promise.all(promises); // Alle gleichzeitig
 // Dauer: ~500-1000ms (20x schneller!)
 ```
 
 **Error Handling:**
+
 ```typescript
 if (!response.ok) {
   console.error(`Fehler bei Pixel (${x},${y}): ${response.status}`);
-  return { x, y, color: { red: 255, green: 0, blue: 255 } };  // Pink
+  return { x, y, color: { red: 255, green: 0, blue: 255 } }; // Pink
 }
 ```
 
 ### Frontend (Client-Side)
 
 **Interaktivität:**
+
 - Klick auf Pixel zeigt Koordinaten und RGB-Werte
 - Hover-Effekt vergrößert Pixel
 - Loading-Spinner während Daten geladen werden
 - Button zum Wechsel zwischen Methoden
 
 **CSS Grid Layout:**
+
 ```css
 .board-container {
   display: grid;
-  grid-template-columns: repeat(16, 50px);  /* 16 Spalten */
+  grid-template-columns: repeat(16, 50px); /* 16 Spalten */
 }
 
 .pixel {
   width: 50px;
   height: 50px;
-  background-color: rgb(r, g, b);  /* Inline gesetzt */
+  background-color: rgb(r, g, b); /* Inline gesetzt */
 }
 ```
 
@@ -423,6 +448,7 @@ if (!response.ok) {
 ### Backend Logs prüfen
 
 Terminal wo `npm run dev` läuft:
+
 ```
 API_URL: http://localhost:5085
 Starte parallelen Abruf...
@@ -433,8 +459,9 @@ Erfolgreich 16x16 Pixels abgerufen
 ### Frontend Logs prüfen
 
 Browser Developer Console (F12):
+
 ```javascript
-console.log(pixels);  // Alle Pixeldaten
+console.log(pixels); // Alle Pixeldaten
 ```
 
 ### Docker Logs prüfen
@@ -448,17 +475,21 @@ docker compose logs app  # Nur API Server
 ### Häufige Probleme
 
 **Problem:** Alle Pixels sind pink
+
 - **Lösung:** Docker Server nicht gestartet oder "Start Game" nicht geklickt
 
 **Problem:** API_URL nicht gefunden
+
 - **Lösung:** `.env.local` Datei erstellt? Server neu gestartet?
 
 **Problem:** Port 3000 belegt
+
 - **Lösung:** Next.js nutzt automatisch Port 3001
 
 ## 📊 Performance
 
 **Vergleich Sequentiell vs. Parallel:**
+
 - **Sequentiell:** ~10-20 Sekunden (256 Aufrufe nacheinander)
 - **Parallel:** ~500-1000ms (256 Aufrufe gleichzeitig)
 - **Speedup:** ~20x schneller! 🚀
@@ -478,14 +509,15 @@ Phillip - M231/M321 Projekt (GIBZ)
 ## 📄 Lizenz
 
 Schulprojekt - Alle Rechte vorbehalten
-   git checkout no-auth
-   ```
+git checkout no-auth
+
+````
 
 2. Docker Compose starten:
 
-   ```bash
-   docker compose up
-   ```
+```bash
+docker compose up
+````
 
 3. Admin-Seite öffnen und "Start Game" klicken:
    - http://localhost:5085/Admin
