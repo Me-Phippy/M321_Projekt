@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "start-docker.bat",
+    "docker:start": "docker-compose -f C:\\Users\\phill\\Desktop\\Module\\M231\\edu-pixelboard-no-auth\\docker-compose.yml up -d",
+    "docker:stop": "docker-compose -f C:\\Users\\phill\\Desktop\\Module\\M231\\edu-pixelboard-no-auth\\docker-compose.yml down",
     "lint": "eslint"
   },
   "dependencies": {

@@ -22,6 +22,7 @@ async function fetchSinglePixel(
   x: number,
   y: number
 ): Promise<Pixel> {
+  console.log(`Fetching pixel at (${x}, ${y}) from ${apiUrl}/api/color/${x}/${y}`);
   try {
     const response = await fetch(`${apiUrl}/api/color/${x}/${y}`);
     
@@ -35,11 +36,13 @@ async function fetchSinglePixel(
     }
     
     const apiColor: ApiColorResponse = await response.json();
-    return {
+    const pixel = {
       x,
       y,
       color: convertApiColor(apiColor),
     };
+    console.log(`✓ Pixel (${x}, ${y}) erfolgreich abgerufen: RGB(${pixel.color.red}, ${pixel.color.green}, ${pixel.color.blue})`);
+    return pixel;
   } catch (error) {
     console.error(`Fehler beim Abrufen von Pixel (${x},${y}):`, error);
     // Pink für Fehler
@@ -59,7 +62,8 @@ async function fetchAllPixelsSequential(apiUrl: string): Promise<Pixel[][]> {
     }
   }
   
-  return pixels;
+  // Pinkkiller nach sequentiellem Abruf
+  return await pinkkiller(pixels, apiUrl);
 }
 
 // Alle Pixel parallel abrufen
@@ -84,6 +88,47 @@ async function fetchAllPixelsParallel(apiUrl: string): Promise<Pixel[][]> {
     }
   }
   
+
+  return await pinkkiller(pixels, apiUrl);
+}
+
+
+async function pinkkiller(pixels: Pixel[][], apiUrl: string): Promise<Pixel[][]> {
+  let iteration = 0;
+  let foundPinkPixels = true;
+
+  while (foundPinkPixels) {
+    iteration++;
+    console.log(`\nPINKKILLER Iteration ${iteration}`);
+    console.log("=".repeat(80));
+
+    const pinkPixels: { x: number; y: number }[] = [];
+
+    // Finde alle pink Pixel
+    for (let x = 0; x < pixels.length; x++) {
+      for (let y = 0; y < pixels[x].length; y++) {
+        const pixel = pixels[x][y];
+        if (pixel.color.red === 255 && pixel.color.green === 0 && pixel.color.blue === 255) {
+          pinkPixels.push({ x, y });
+        }
+      }
+    }
+
+    if (pinkPixels.length > 0) {
+      console.log(`PINKKILLER: ${pinkPixels.length} fehlerhafte Pixel gefunden. Erneuter Abruf...`);
+      for (const pos of pinkPixels) {
+        console.log(`  Re-fetching pink pixel at (${pos.x}, ${pos.y})`);
+        const updatedPixel = await fetchSinglePixel(apiUrl, pos.x, pos.y);
+        pixels[pos.x][pos.y] = updatedPixel;
+      }
+      // Nochmal prüfen in der nächsten Iteration
+      foundPinkPixels = true;
+    } else {
+      console.log("✓ Keine fehlerhaften Pixel gefunden. PINKKILLER beendet.");
+      foundPinkPixels = false;
+    }
+  }
+
   return pixels;
 }
 
