@@ -1,6 +1,9 @@
 import type { Pixel, ApiColorResponse } from "@/types/pixel";
 import { convertApiColor } from "@/types/pixel";
 import type { NextApiResponse } from "next";
+import { GraphQLClient, gql } from "graphql-request";
+import { createClient, Client } from "graphql-ws";
+import WebSocket from "ws";
 
 const BOARD_SIZE = 16;
 const UPDATE_INTERVAL = 10000; // 10 Sekunden
@@ -16,15 +19,70 @@ interface SseClient {
   response: NextApiResponse;
 }
 
+// GraphQL Query für pixelRange
+const GET_PIXEL_RANGE = gql`
+  query GetPixelRange($x1: Int!, $y1: Int!, $x2: Int!, $y2: Int!) {
+    pixelRange(x1: $x1, y1: $y1, x2: $x2, y2: $y2) {
+      x
+      y
+      color {
+        red
+        green
+        blue
+      }
+    }
+  }
+`;
+
+// GraphQL Subscription für pixelChanged
+const PIXEL_CHANGED_SUBSCRIPTION = `
+  subscription OnPixelChanged {
+    pixelChanged {
+      x
+      y
+      color {
+        red
+        green
+        blue
+      }
+    }
+  }
+`;
+
+// GraphQL Response Type
+interface GraphQLPixelResponse {
+  x: number;
+  y: number;
+  color: {
+    red: number;
+    green: number;
+    blue: number;
+  };
+}
+
+interface PixelRangeResponse {
+  pixelRange: GraphQLPixelResponse[];
+}
+
+interface PixelChangedResponse {
+  pixelChanged: GraphQLPixelResponse;
+}
+
 class BoardStateService {
   private state: BoardState | null = null;
   private updateTimer: NodeJS.Timeout | null = null;
   private apiUrl: string;
+  private graphqlClient: GraphQLClient;
+  private wsClient: Client | null = null;
+  private subscription: (() => void) | null = null;
   private sseClients: Map<string, SseClient> = new Map();
 
   constructor() {
     this.apiUrl = process.env.API_URL || "";
-    console.log("BoardStateService initialisiert");
+    // GraphQL Endpoint ist /graphql
+    const graphqlUrl = `${this.apiUrl}/graphql`;
+    this.graphqlClient = new GraphQLClient(graphqlUrl);
+    console.log("BoardStateService initialisiert mit GraphQL:", graphqlUrl);
   }
 
   // Startet den Hintergrund-Update-Prozess
@@ -54,6 +112,115 @@ class BoardStateService {
     }
   }
 
+  // Startet GraphQL Subscription für Live-Updates
+  public startSubscription(): void {
+    if (this.subscription) {
+      console.log("Subscription läuft bereits");
+      return;
+    }
+
+    try {
+      // WebSocket URL (http -> ws, https -> wss)
+      const wsUrl = this.apiUrl.replace(/^http/, "ws") + "/graphql";
+      console.log("Starte GraphQL Subscription:", wsUrl);
+
+      // Erstelle WebSocket Client
+      this.wsClient = createClient({
+        url: wsUrl,
+        webSocketImpl: WebSocket,
+      });
+
+      // Subscribe zu pixelChanged
+      const unsubscribe = this.wsClient.subscribe<PixelChangedResponse>(
+        {
+          query: PIXEL_CHANGED_SUBSCRIPTION,
+        },
+        {
+          next: (data) => {
+            if (data.data?.pixelChanged) {
+              this.handlePixelChanged(data.data.pixelChanged);
+            }
+          },
+          error: (error) => {
+            console.error("Subscription error:", error);
+          },
+          complete: () => {
+            console.log("Subscription completed");
+          },
+        }
+      );
+
+      this.subscription = unsubscribe;
+      console.log("GraphQL Subscription aktiv");
+    } catch (error) {
+      console.error("Fehler beim Starten der Subscription:", error);
+    }
+  }
+
+  // Stoppt GraphQL Subscription
+  public stopSubscription(): void {
+    if (this.subscription) {
+      this.subscription();
+      this.subscription = null;
+      console.log("Subscription gestoppt");
+    }
+    if (this.wsClient) {
+      this.wsClient.dispose();
+      this.wsClient = null;
+    }
+  }
+
+  // Verarbeitet einzelne Pixel-Updates von der Subscription
+  private handlePixelChanged(pixel: GraphQLPixelResponse): void {
+    if (!this.state?.pixels) {
+      return;
+    }
+
+    console.log(`Pixel geändert via Subscription: (${pixel.x},${pixel.y})`);
+
+    // Update im lokalen State
+    this.state.pixels[pixel.x][pixel.y] = {
+      x: pixel.x,
+      y: pixel.y,
+      color: pixel.color,
+    };
+
+    // Sende Update an alle SSE-Clients
+    this.broadcastSinglePixelUpdate(pixel);
+  }
+
+  // Sendet einzelnes Pixel-Update an alle SSE-Clients
+  private broadcastSinglePixelUpdate(pixel: GraphQLPixelResponse): void {
+    if (this.sseClients.size === 0) {
+      return;
+    }
+
+    const data = JSON.stringify({
+      type: "pixel-update",
+      pixel: {
+        x: pixel.x,
+        y: pixel.y,
+        color: pixel.color,
+      },
+    });
+
+    const disconnectedClients: string[] = [];
+
+    this.sseClients.forEach((client) => {
+      try {
+        client.response.write(`data: ${data}\n\n`);
+      } catch (error) {
+        console.error(`Fehler beim Senden an Client ${client.id}:`, error);
+        disconnectedClients.push(client.id);
+      }
+    });
+
+    // Entferne getrennte Clients
+    disconnectedClients.forEach((clientId) => {
+      this.removeSseClient(clientId);
+    });
+  }
+
   // Holt ein einzelnes Pixel vom API
   private async fetchSinglePixel(x: number, y: number): Promise<Pixel> {
     try {
@@ -76,7 +243,86 @@ class BoardStateService {
     }
   }
 
-  // Lädt alle Pixels parallel vom API
+  // Lädt alle Pixels über GraphQL
+  private async fetchAllPixelsGraphQL(): Promise<Pixel[][]> {
+    try {
+      // Versuche zuerst pixelRange (nur auf neueren Servern verfügbar)
+      const response = await this.graphqlClient.request<PixelRangeResponse>(
+        GET_PIXEL_RANGE,
+        {
+          x1: 0,
+          y1: 0,
+          x2: BOARD_SIZE - 1,
+          y2: BOARD_SIZE - 1,
+        }
+      );
+
+      // Konvertiere die flache Liste in ein 2D Array
+      const pixels: Pixel[][] = Array.from({ length: BOARD_SIZE }, () =>
+        Array(BOARD_SIZE).fill(null)
+      );
+
+      response.pixelRange.forEach((pixel) => {
+        pixels[pixel.x][pixel.y] = {
+          x: pixel.x,
+          y: pixel.y,
+          color: pixel.color,
+        };
+      });
+
+      return pixels;
+    } catch (error) {
+      // pixelRange nicht verfügbar, verwende Aliasing-Workaround
+      console.log("pixelRange nicht verfügbar, verwende GraphQL Aliasing (256 Queries in 1 Request)");
+      return this.fetchAllPixelsWithAliasing();
+    }
+  }
+
+  // GraphQL Aliasing: Holt alle 256 Pixels in EINEM Request (für Server ohne pixelRange)
+  private async fetchAllPixelsWithAliasing(): Promise<Pixel[][]> {
+    try {
+      // Baue eine Query mit 256 aliased Feldern
+      const queryParts: string[] = [];
+
+      for (let x = 0; x < BOARD_SIZE; x++) {
+        for (let y = 0; y < BOARD_SIZE; y++) {
+          queryParts.push(`p${x}_${y}: pixel(x: ${x}, y: ${y}) { x y color { red green blue } }`);
+        }
+      }
+
+      const query = `query GetAllPixels { ${queryParts.join(' ')} }`;
+
+      // Sende die Query
+      const response = await this.graphqlClient.request<any>(query);
+
+      // Konvertiere Response in 2D Array
+      const pixels: Pixel[][] = Array.from({ length: BOARD_SIZE }, () =>
+        Array(BOARD_SIZE).fill(null)
+      );
+
+      for (let x = 0; x < BOARD_SIZE; x++) {
+        for (let y = 0; y < BOARD_SIZE; y++) {
+          const alias = `p${x}_${y}`;
+          const pixel = response[alias];
+          if (pixel) {
+            pixels[x][y] = {
+              x: pixel.x,
+              y: pixel.y,
+              color: pixel.color,
+            };
+          }
+        }
+      }
+
+      return pixels;
+    } catch (error) {
+      console.error("Fehler beim GraphQL Aliasing Abruf:", error);
+      // Letzter Fallback: REST API
+      return this.fetchAllPixelsParallel();
+    }
+  }
+
+  // Fallback: Lädt alle Pixels parallel vom REST API (nur falls GraphQL fehlschlägt)
   private async fetchAllPixelsParallel(): Promise<Pixel[][]> {
     const promises: Promise<Pixel>[] = [];
 
@@ -151,10 +397,10 @@ class BoardStateService {
         this.state.isUpdating = true;
       }
 
-      console.log("Background-Update: Lade Pixelboard...");
+      console.log("Background-Update: Lade Pixelboard via GraphQL...");
       const startTime = Date.now();
 
-      let pixels = await this.fetchAllPixelsParallel();
+      let pixels = await this.fetchAllPixelsGraphQL();
 
       // Führe Pinkkiller aus, um fehlerhafte Pixels zu korrigieren
       pixels = await this.pinkkiller(pixels);
@@ -206,6 +452,19 @@ class BoardStateService {
     await this.updateBoard();
   }
 
+  // Manuelles Setzen des Board-States (z.B. für parallel/sequential Fetch)
+  public updateBoardState(pixels: Pixel[][]): void {
+    this.state = {
+      pixels,
+      lastUpdate: Date.now(),
+      isUpdating: false,
+    };
+    console.log("Board-State manuell aktualisiert");
+
+    // Sende Update an alle verbundenen SSE-Clients
+    this.broadcastToSseClients(pixels);
+  }
+
   // SSE-Client-Management
   public addSseClient(response: NextApiResponse): string {
     const clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -252,6 +511,7 @@ export function getBoardStateService(): BoardStateService {
   if (!boardStateServiceInstance) {
     boardStateServiceInstance = new BoardStateService();
     boardStateServiceInstance.startBackgroundUpdates();
+    boardStateServiceInstance.startSubscription(); // Live-Updates via GraphQL Subscription
   }
   return boardStateServiceInstance;
 }

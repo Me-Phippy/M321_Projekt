@@ -20,8 +20,10 @@ export default function Home() {
   const [lastSetPixelDuration, setLastSetPixelDuration] = useState<number | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
 
-  const fetchPixels = (fetchMethod: "parallel" | "sequential" | "cache") => {
-    setLoading(true);
+  const fetchPixels = (fetchMethod: "parallel" | "sequential" | "cache" = method, showLoading: boolean = true) => {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
 
     fetch(`${API_ENDPOINTS.pixels}?method=${fetchMethod}`)
@@ -59,7 +61,8 @@ export default function Home() {
         setLastSetPixelDuration(result.duration);
         setSetPixelMessage(`HTTP ${response.status}: ${result.message} (${result.duration}ms)`);
         setTimeout(() => setSetPixelMessage(null), 3000);
-        // SSE sendet automatisch das Update - kein manuelles fetchPixels mehr nötig
+        // Fetch updated board state from backend (without showing loading spinner)
+        fetchPixels("cache", false);
       } else {
         setLastSetPixelDuration(result.duration);
         setSetPixelMessage(`HTTP ${response.status}: ${result.error} (${result.duration}ms)`);
@@ -175,7 +178,7 @@ export default function Home() {
                 : "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
             }`}
           >
-            Cache (schnell)
+            Cache (Backend)
           </button>
           <button
             onClick={() => handleMethodChange("parallel")}

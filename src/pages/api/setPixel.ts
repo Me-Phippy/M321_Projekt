@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getBoardStateService } from "@/services/boardStateService";
 
 interface SetPixelRequest {
   x: number;
@@ -63,7 +62,7 @@ export default async function handler(
     // Start time measurement
     const startTime = Date.now();
 
-    // Make POST request to external API
+    // Make POST request to REST API (GraphQL unterstützt keine Mutations auf diesem Server)
     const response = await fetch(`${API_URL}/api/color`, {
       method: "POST",
       headers: {
@@ -97,11 +96,8 @@ export default async function handler(
 
     console.log(`✓ Pixel (${x}, ${y}) successfully set: ${responseText} (${duration}ms)`);
 
-    // Cache nach POST-Request aktualisieren
-    const boardStateService = getBoardStateService();
-    boardStateService.forceUpdate().catch((err) => {
-      console.error("Fehler beim Cache-Update nach POST:", err);
-    });
+    // Cache wird automatisch durch die GraphQL Subscription aktualisiert!
+    // Kein forceUpdate() mehr nötig - die Subscription pusht das Update sofort.
 
     return res.status(200).json({
       success: true,
