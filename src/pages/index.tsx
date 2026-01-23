@@ -18,6 +18,7 @@ export default function Home() {
   const [selectedTeam, setSelectedTeam] = useState(3);
   const [setPixelMessage, setSetPixelMessage] = useState<string | null>(null);
   const [lastSetPixelDuration, setLastSetPixelDuration] = useState<number | null>(null);
+  const [sseConnected, setSseConnected] = useState(false);
 
   const fetchPixels = (fetchMethod: "parallel" | "sequential" | "cache") => {
     setLoading(true);
@@ -58,8 +59,7 @@ export default function Home() {
         setLastSetPixelDuration(result.duration);
         setSetPixelMessage(`HTTP ${response.status}: ${result.message} (${result.duration}ms)`);
         setTimeout(() => setSetPixelMessage(null), 3000);
-        // Reload pixels to show the change
-        fetchPixels(method);
+        // SSE sendet automatisch das Update - kein manuelles fetchPixels mehr nötig
       } else {
         setLastSetPixelDuration(result.duration);
         setSetPixelMessage(`HTTP ${response.status}: ${result.error} (${result.duration}ms)`);
@@ -78,8 +78,61 @@ export default function Home() {
       await setPixel(3, 3, 3, 0, 0, 0);
     };
 
+    // Initial fetch
     fetchPixels(method);
     initializePixel();
+
+    // SSE-Verbindung aufbauen
+    console.log("Baue SSE-Verbindung auf...");
+    const eventSource = new EventSource("/api/sse-pixels");
+
+    eventSource.onopen = () => {
+      console.log("SSE-Verbindung hergestellt");
+      setSseConnected(true);
+    };
+
+    eventSource.onmessage = (event) => {
+      console.log("SSE-Update erhalten");
+      try {
+        const update = JSON.parse(event.data);
+        if (update.pixels) {
+          // Aktualisiere Pixel-Farben direkt im DOM
+          update.pixels.forEach((row: Pixel[], x: number) => {
+            row.forEach((pixel: Pixel, y: number) => {
+              const element = document.getElementById(`pixel-${x}-${y}`);
+              if (element) {
+                const { red, green, blue } = pixel.color;
+                element.style.backgroundColor = `rgb(${red}, ${green}, ${blue})`;
+              }
+            });
+          });
+
+          // Aktualisiere auch den State für initiales Rendering und andere UI-Elemente
+          setData((prevData) => ({
+            pixels: update.pixels,
+            method: "sse",
+            duration: prevData?.duration || 0,
+            boardSize: update.pixels.length,
+          }));
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error("Fehler beim Parsen der SSE-Daten:", err);
+      }
+    };
+
+    eventSource.onerror = (err) => {
+      console.error("SSE-Fehler:", err);
+      setSseConnected(false);
+      // Bei Fehler versuchen wir es mit normalem Polling
+      setError("SSE-Verbindung unterbrochen");
+    };
+
+    // Cleanup: Verbindung schließen beim Unmount
+    return () => {
+      console.log("Schließe SSE-Verbindung");
+      eventSource.close();
+    };
   }, []);
 
   const handleMethodChange = (newMethod: "parallel" | "sequential" | "cache") => {
@@ -99,6 +152,18 @@ export default function Home() {
         <h1 className="text-4xl font-bold text-black dark:text-zinc-50">
           Pixelboard
         </h1>
+
+        {/* SSE-Verbindungsstatus */}
+        <div className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
+          sseConnected
+            ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100"
+            : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-100"
+        }`}>
+          <div className={`w-2 h-2 rounded-full ${sseConnected ? "bg-green-600 animate-pulse" : "bg-red-600"}`}></div>
+          <span className="text-sm font-medium">
+            {sseConnected ? "Live-Updates aktiv (SSE)" : "Live-Updates getrennt"}
+          </span>
+        </div>
 
         {/* Methodenauswahl */}
         <div className="flex gap-4">
@@ -256,6 +321,7 @@ export default function Home() {
                     row.map((pixel, y) => (
                       <div
                         key={`${x}-${y}`}
+                        id={`pixel-${x}-${y}`}
                         className="pixel"
                         style={{
                           backgroundColor: `rgb(${pixel.color.red}, ${pixel.color.green}, ${pixel.color.blue})`,
