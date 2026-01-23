@@ -41,6 +41,7 @@ export default async function handler(
   try {
     const { x, y, team, red, green, blue }: SetPixelRequest = req.body;
 
+    // Validate input
     if (
       x === undefined ||
       y === undefined ||
@@ -59,10 +60,10 @@ export default async function handler(
       `Setting pixel at (${x}, ${y}) for team ${team} to RGB(${red}, ${green}, ${blue})`
     );
 
-    
+    // Start time measurement
     const startTime = Date.now();
 
-    
+    // Make POST request to external API
     const response = await fetch(`${API_URL}/api/color`, {
       method: "POST",
       headers: {
@@ -80,7 +81,7 @@ export default async function handler(
 
     const responseText = await response.text();
 
-  
+    // Calculate duration
     const duration = Date.now() - startTime;
 
     if (!response.ok) {
@@ -96,7 +97,7 @@ export default async function handler(
 
     console.log(`✓ Pixel (${x}, ${y}) successfully set: ${responseText} (${duration}ms)`);
 
-   
+    // Cache nach POST-Request aktualisieren
     const boardStateService = getBoardStateService();
     boardStateService.forceUpdate().catch((err) => {
       console.error("Fehler beim Cache-Update nach POST:", err);
