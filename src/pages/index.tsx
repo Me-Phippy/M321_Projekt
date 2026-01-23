@@ -13,13 +13,16 @@ export default function Home() {
   const [data, setData] = useState<PixelsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [method, setMethod] = useState<"parallel" | "sequential">("parallel");
+  const [method, setMethod] = useState<"parallel" | "sequential" | "cache">("cache");
   const [selectedPixel, setSelectedPixel] = useState<Pixel | null>(null);
+  const [selectedTeam, setSelectedTeam] = useState(3);
+  const [setPixelMessage, setSetPixelMessage] = useState<string | null>(null);
+  const [lastSetPixelDuration, setLastSetPixelDuration] = useState<number | null>(null);
 
-  const fetchPixels = (fetchMethod: "parallel" | "sequential") => {
+  const fetchPixels = (fetchMethod: "parallel" | "sequential" | "cache") => {
     setLoading(true);
     setError(null);
-    
+
     fetch(`${API_ENDPOINTS.pixels}?method=${fetchMethod}`)
       .then((res) => {
         if (!res.ok) {
@@ -38,17 +41,56 @@ export default function Home() {
       });
   };
 
+  const setPixel = async (x: number, y: number, team: number, red: number, green: number, blue: number) => {
+    try {
+      const response = await fetch("/api/setPixel", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ x, y, team, red, green, blue }),
+      });
+
+      const result = await response.json();
+
+      // Show server response with HTTP status and duration
+      if (result.success) {
+        setLastSetPixelDuration(result.duration);
+        setSetPixelMessage(`HTTP ${response.status}: ${result.message} (${result.duration}ms)`);
+        setTimeout(() => setSetPixelMessage(null), 3000);
+        // Reload pixels to show the change
+        fetchPixels(method);
+      } else {
+        setLastSetPixelDuration(result.duration);
+        setSetPixelMessage(`HTTP ${response.status}: ${result.error} (${result.duration}ms)`);
+        setTimeout(() => setSetPixelMessage(null), 5000);
+      }
+    } catch (err) {
+      console.error("Failed to set pixel:", err);
+      setSetPixelMessage(`Error: ${String(err)}`);
+      setTimeout(() => setSetPixelMessage(null), 5000);
+    }
+  };
+
   useEffect(() => {
+    // Set initial pixel (3, 3) with team 3 when page loads
+    const initializePixel = async () => {
+      await setPixel(3, 3, 3, 0, 0, 0);
+    };
+
     fetchPixels(method);
+    initializePixel();
   }, []);
 
-  const handleMethodChange = (newMethod: "parallel" | "sequential") => {
+  const handleMethodChange = (newMethod: "parallel" | "sequential" | "cache") => {
     setMethod(newMethod);
     fetchPixels(newMethod);
   };
 
   const handlePixelClick = (pixel: Pixel) => {
     setSelectedPixel(pixel);
+    // Set the clicked pixel with selected team (color is determined by backend)
+    setPixel(pixel.x, pixel.y, selectedTeam, 0, 0, 0);
   };
 
   return (
@@ -60,6 +102,16 @@ export default function Home() {
 
         {/* Methodenauswahl */}
         <div className="flex gap-4">
+          <button
+            onClick={() => handleMethodChange("cache")}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              method === "cache"
+                ? "bg-green-600 text-white"
+                : "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            }`}
+          >
+            Cache (schnell)
+          </button>
           <button
             onClick={() => handleMethodChange("parallel")}
             className={`px-4 py-2 rounded-lg font-medium transition-colors ${
@@ -80,6 +132,76 @@ export default function Home() {
           >
             Sequentiell
           </button>
+        </div>
+
+        {/* Performance Statistiken */}
+        <div className="w-full max-w-2xl p-6 rounded-lg shadow-lg border-2 border-blue-200 dark:border-blue-800">
+          <h2 className="text-xl font-bold text-black dark:text-black">
+            Performance Messungen
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* GET Request Dauer */}
+            <div className="bg-white dark:bg-zinc-900 p-4 rounded-lg">
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">
+                GET alle Pixels (16x16 = 256)
+              </p>
+              <p className="text-2xl font-bold text-black-600 dark:text-white-400">
+                {data ? `${data.duration}ms` : '-'}
+              </p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">
+                Methode: {data?.method || '-'}
+              </p>
+            </div>
+
+            {/* POST Request Dauer */}
+            <div className="bg-white dark:bg-zinc-900 p-4 rounded-lg">
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">
+                POST einzelnes Pixel
+              </p>
+              <p className="text-2xl font-bold text-white-600 dark:text-white-400">
+                {lastSetPixelDuration !== null ? `${lastSetPixelDuration}ms` : '-'}
+              </p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">
+                Letzter Request
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Pixel setzen - Team auswählen */}
+        <div className="w-full max-w-2xl bg-white dark:bg-zinc-900 p-6 rounded-lg shadow-lg">
+          <h2 className="text-2xl font-bold mb-4 text-zinc-900 dark:text-zinc-50">
+            Pixel setzen
+          </h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+            Wählen Sie ein Team und klicken Sie auf ein Pixel, um es zu setzen. Die Farbe wird automatisch basierend auf dem Team zugewiesen.
+          </p>
+
+          {/* Team Auswahl */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+              Team (0-16):
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="16"
+              value={selectedTeam}
+              onChange={(e) => setSelectedTeam(parseInt(e.target.value) || 0)}
+              className="w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
+            />
+          </div>
+
+          {/* Status Nachricht */}
+          {setPixelMessage && (
+            <div className={`mt-4 p-3 rounded-lg ${
+              setPixelMessage.includes("HTTP 200")
+                ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100"
+                : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-100"
+            }`}>
+              {setPixelMessage}
+            </div>
+          )}
         </div>
 
         <div className="rounded-lg bg-white p-6 shadow-lg dark:bg-zinc-900 w-full">

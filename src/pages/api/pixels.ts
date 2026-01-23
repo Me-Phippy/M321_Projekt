@@ -1,10 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import type { Pixel, ApiColorResponse } from "@/types/pixel";
 import { convertApiColor } from "@/types/pixel";
+import { getBoardStateService } from "@/services/boardStateService";
 
 const BOARD_SIZE = 16;
 
-// Hilfsfunktion: Zeit messen
 async function measureTime<T>(
   name: string,
   fn: () => Promise<T>
@@ -16,7 +16,6 @@ async function measureTime<T>(
   return { result, duration };
 }
 
-// Einzelnes Pixel abrufen
 async function fetchSinglePixel(
   apiUrl: string,
   x: number,
@@ -31,7 +30,7 @@ async function fetchSinglePixel(
       console.error(
         `Fehler beim Abrufen von Pixel (${x},${y}): ${response.status} - ${errorText}`
       );
-      // Pink für Fehler
+
       return { x, y, color: { red: 255, green: 0, blue: 255 } };
     }
     
@@ -45,12 +44,11 @@ async function fetchSinglePixel(
     return pixel;
   } catch (error) {
     console.error(`Fehler beim Abrufen von Pixel (${x},${y}):`, error);
-    // Pink für Fehler
+
     return { x, y, color: { red: 255, green: 0, blue: 255 } };
   }
 }
 
-// Alle Pixel sequentiell abrufen
 async function fetchAllPixelsSequential(apiUrl: string): Promise<Pixel[][]> {
   const pixels: Pixel[][] = [];
   
@@ -62,11 +60,11 @@ async function fetchAllPixelsSequential(apiUrl: string): Promise<Pixel[][]> {
     }
   }
   
-  // Pinkkiller nach sequentiellem Abruf
+ 
   return await pinkkiller(pixels, apiUrl);
 }
 
-// Alle Pixel parallel abrufen
+
 async function fetchAllPixelsParallel(apiUrl: string): Promise<Pixel[][]> {
   const promises: Promise<Pixel>[] = [];
   
@@ -78,7 +76,7 @@ async function fetchAllPixelsParallel(apiUrl: string): Promise<Pixel[][]> {
   
   const allPixels = await Promise.all(promises);
   
-  // In 2D-Array umwandeln
+ 
   const pixels: Pixel[][] = [];
   for (let x = 0; x < BOARD_SIZE; x++) {
     pixels[x] = [];
@@ -104,7 +102,7 @@ async function pinkkiller(pixels: Pixel[][], apiUrl: string): Promise<Pixel[][]>
 
     const pinkPixels: { x: number; y: number }[] = [];
 
-    // Finde alle pink Pixel
+
     for (let x = 0; x < pixels.length; x++) {
       for (let y = 0; y < pixels[x].length; y++) {
         const pixel = pixels[x][y];
@@ -121,7 +119,7 @@ async function pinkkiller(pixels: Pixel[][], apiUrl: string): Promise<Pixel[][]>
         const updatedPixel = await fetchSinglePixel(apiUrl, pos.x, pos.y);
         pixels[pos.x][pos.y] = updatedPixel;
       }
-      // Nochmal prüfen in der nächsten Iteration
+     
       foundPinkPixels = true;
     } else {
       console.log("✓ Keine fehlerhaften Pixel gefunden. PINKKILLER beendet.");
@@ -145,13 +143,32 @@ export default async function handler(
   }
   
   try {
-    // Methode aus Query-Parameter lesen (default: parallel)
-    const method = (req.query.method as string) || "parallel";
-    
+    const method = (req.query.method as string) || "cache";
+
     let pixels: Pixel[][];
     let duration: number;
-    
-    if (method === "sequential") {
+
+    if (method === "cache") {
+      // Verwende den Hintergrund-Cache
+      console.log("Lade Daten aus Cache...");
+      const startTime = Date.now();
+
+      const boardStateService = getBoardStateService();
+      const cachedBoard = boardStateService.getBoard();
+
+      if (!cachedBoard) {
+        // Falls Cache noch nicht bereit ist, warte auf Update
+        console.log("Cache noch nicht bereit, erzwinge Update...");
+        await boardStateService.forceUpdate();
+        pixels = boardStateService.getBoard() || [];
+      } else {
+        pixels = cachedBoard;
+      }
+
+      duration = Date.now() - startTime;
+      console.log(`Cache-Abruf dauerte ${duration}ms`);
+
+    } else if (method === "sequential") {
       console.log("Starte sequentiellen Abruf...");
       const result = await measureTime(
         "Sequentieller Abruf",
@@ -168,9 +185,9 @@ export default async function handler(
       pixels = result.result;
       duration = result.duration;
     }
-    
+
     console.log(`Erfolgreich ${BOARD_SIZE}x${BOARD_SIZE} Pixels abgerufen`);
-    
+
     res.status(200).json({
       pixels,
       method,
