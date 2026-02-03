@@ -77,15 +77,18 @@ export default async function handler(
     // Start time measurement
     const startTime = Date.now();
 
-    // Get JWT token from session
-    const accessToken = (session as any).accessToken;
+    // Get JWT id_token from session (für Aufgabe 5 - OAuth 2.0 Standard)
+    const idToken = (session as any).idToken;
 
-    // Make POST request to REST API with JWT token
+    console.log("=== JWT ID Token für API-Aufruf ===");
+    console.log(idToken ? "Token vorhanden" : "Kein Token!");
+
+    // Make POST request to REST API with JWT token (OAuth 2.0 Bearer Token)
     const response = await fetch(`${API_URL}/api/color`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(accessToken && { "Authorization": `Bearer ${accessToken}` }),
+        ...(idToken && { "Authorization": `Bearer ${idToken}` }),
       },
       body: JSON.stringify({
         X: x,

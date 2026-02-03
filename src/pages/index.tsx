@@ -165,7 +165,14 @@ export default function Home() {
     if (status === "unauthenticated") {
       signIn("keycloak", { callbackUrl: window.location.href });
     }
-  }, [status]);
+
+    // JWT Token (id_token) in Konsole ausgeben für Aufgabe 5
+    if (session?.idToken) {
+      console.log("=== JWT ID Token ===");
+      console.log(session.idToken);
+      console.log("Decode auf https://jwt.io für Details");
+    }
+  }, [status, session]);
 
   // Show loading while checking authentication
   if (status === "loading") {
