@@ -14,6 +14,9 @@ interface SetPixelResponse {
   message?: string;
   error?: string;
   duration?: number;
+  httpStatus?: number;
+  statusText?: string;
+  serverResponse?: string;
 }
 
 export default async function handler(
