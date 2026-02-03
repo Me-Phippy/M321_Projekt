@@ -59,19 +59,28 @@ export default function Home() {
       // Show server response with HTTP status and duration
       if (result.success) {
         setLastSetPixelDuration(result.duration);
-        setSetPixelMessage(`HTTP ${response.status}: ${result.message} (${result.duration}ms)`);
+        setSetPixelMessage(`✓ HTTP ${response.status}: ${result.message} (${result.duration}ms)`);
         setTimeout(() => setSetPixelMessage(null), 3000);
         // Fetch updated board state from backend (without showing loading spinner)
         fetchPixels("cache", false);
       } else {
         setLastSetPixelDuration(result.duration);
-        setSetPixelMessage(`HTTP ${response.status}: ${result.error} (${result.duration}ms)`);
-        setTimeout(() => setSetPixelMessage(null), 5000);
+        // Detaillierte Fehlermeldung mit allen verfügbaren Informationen
+        const errorDetails = [
+          `✗ HTTP ${result.httpStatus || response.status} ${result.statusText || ''}`,
+          `Fehler: ${result.error}`,
+          result.serverResponse ? `Server: ${result.serverResponse}` : null,
+          `Dauer: ${result.duration}ms`
+        ].filter(Boolean).join(' | ');
+        
+        setSetPixelMessage(errorDetails);
+        console.error("Pixel setzen fehlgeschlagen:", result);
+        setTimeout(() => setSetPixelMessage(null), 8000);
       }
     } catch (err) {
       console.error("Failed to set pixel:", err);
-      setSetPixelMessage(`Error: ${String(err)}`);
-      setTimeout(() => setSetPixelMessage(null), 5000);
+      setSetPixelMessage(`✗ Netzwerkfehler: ${String(err)}`);
+      setTimeout(() => setSetPixelMessage(null), 8000);
     }
   };
 
@@ -262,14 +271,16 @@ export default function Home() {
 
           {/* Status Nachricht */}
           {setPixelMessage && (
-            <div className={`mt-4 p-3 rounded-lg ${
-              setPixelMessage.includes("HTTP 200")
-                ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100"
-                : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-100"
+            <div className={`mt-4 p-4 rounded-lg border-2 ${
+              setPixelMessage.includes("✓")
+                ? "bg-green-50 dark:bg-green-950 border-green-500 text-green-900 dark:text-green-100"
+                : "bg-red-50 dark:bg-red-950 border-red-500 text-red-900 dark:text-red-100"
             }`}>
-              {setPixelMessage}
+              <div className="font-mono text-sm whitespace-pre-wrap break-all">
+                {setPixelMessage}
+              </div>
             </div>
-          )}
+          )}          
         </div>
 
         <div className="rounded-lg bg-white p-6 shadow-lg dark:bg-zinc-900 w-full">

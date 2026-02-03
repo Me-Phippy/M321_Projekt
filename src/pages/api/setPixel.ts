@@ -87,9 +87,23 @@ export default async function handler(
       console.error(
         `Failed to set pixel (${x},${y}): ${response.status} - ${responseText} (${duration}ms)`
       );
+      
+      // Detaillierte Fehlermeldung mit HTTP-Status und Server-Response
+      let errorMessage = responseText || response.statusText;
+      
+      // Spezielle Behandlung für Auth-Fehler
+      if (response.status === 401) {
+        errorMessage = `Authentifizierung fehlgeschlagen: ${responseText || 'Kein JWT-Token vorhanden'}`;
+      } else if (response.status === 403) {
+        errorMessage = `Zugriff verweigert: ${responseText}`;
+      }
+      
       return res.status(response.status).json({
         success: false,
-        error: responseText,
+        error: errorMessage,
+        httpStatus: response.status,
+        statusText: response.statusText,
+        serverResponse: responseText,
         duration,
       });
     }
