@@ -203,7 +203,19 @@ export default function Home() {
               Angemeldet als: <span className="font-semibold">{session?.user?.name || session?.user?.email}</span>
             </p>
             <button
-              onClick={() => signOut()}
+              onClick={() => {
+                // Keycloak Federated Logout - auch die Keycloak-Session beenden
+                const keycloakIssuer = process.env.NEXT_PUBLIC_KEYCLOAK_ISSUER || "http://localhost:18080/realms/pixelboard-test";
+                const idToken = session?.idToken;
+                const logoutUrl = `${keycloakIssuer}/protocol/openid-connect/logout` +
+                  `?post_logout_redirect_uri=${encodeURIComponent(window.location.origin)}` +
+                  (idToken ? `&id_token_hint=${idToken}` : "");
+
+                // Erst lokale Session löschen, dann zu Keycloak-Logout weiterleiten
+                signOut({ redirect: false }).then(() => {
+                  window.location.href = logoutUrl;
+                });
+              }}
               className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
             >
               Abmelden
