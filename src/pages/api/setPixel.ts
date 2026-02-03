@@ -1,4 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "./auth/[...nextauth]";
 
 interface SetPixelRequest {
   x: number;
@@ -28,6 +30,16 @@ export default async function handler(
     return res.status(405).json({
       success: false,
       error: "Method not allowed. Use POST.",
+    });
+  }
+
+  // Check authentication
+  const session = await getServerSession(req, res, authOptions);
+  
+  if (!session) {
+    return res.status(401).json({
+      success: false,
+      error: "Nicht authentifiziert. Bitte melden Sie sich an.",
     });
   }
 
@@ -65,11 +77,15 @@ export default async function handler(
     // Start time measurement
     const startTime = Date.now();
 
-    // Make POST request to REST API (GraphQL unterstützt keine Mutations auf diesem Server)
+    // Get JWT token from session
+    const accessToken = (session as any).accessToken;
+
+    // Make POST request to REST API with JWT token
     const response = await fetch(`${API_URL}/api/color`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(accessToken && { "Authorization": `Bearer ${accessToken}` }),
       },
       body: JSON.stringify({
         X: x,

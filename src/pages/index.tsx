@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSession, signIn, signOut } from "next-auth/react";
 import type { Pixel } from "@/types/pixel";
 import { API_ENDPOINTS } from "@/config/api";
 
@@ -10,6 +11,7 @@ interface PixelsResponse {
 }
 
 export default function Home() {
+  const { data: session, status } = useSession();
   const [data, setData] = useState<PixelsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -158,12 +160,49 @@ export default function Home() {
     setPixel(pixel.x, pixel.y, selectedTeam, 0, 0, 0);
   };
 
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      signIn("keycloak", { callbackUrl: window.location.href });
+    }
+  }, [status]);
+
+  // Show loading while checking authentication
+  if (status === "loading") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-black">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-300 border-t-blue-600"></div>
+          <p className="text-zinc-600 dark:text-zinc-400">Authentifizierung prüfen...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Don't render content if not authenticated (should redirect anyway)
+  if (status === "unauthenticated") {
+    return null;
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-4 dark:bg-black">
       <main className="flex flex-col items-center gap-6 w-full max-w-6xl">
-        <h1 className="text-4xl font-bold text-black dark:text-zinc-50">
-          Pixelboard
-        </h1>
+        <div className="w-full flex justify-between items-center">
+          <h1 className="text-4xl font-bold text-black dark:text-zinc-50">
+            Pixelboard
+          </h1>
+          <div className="flex items-center gap-4">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Angemeldet als: <span className="font-semibold">{session?.user?.name || session?.user?.email}</span>
+            </p>
+            <button
+              onClick={() => signOut()}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+            >
+              Abmelden
+            </button>
+          </div>
+        </div>
 
         {/* SSE-Verbindungsstatus */}
         <div className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
