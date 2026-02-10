@@ -7,6 +7,11 @@ export const authOptions: AuthOptions = {
       clientId: process.env.KEYCLOAK_ID!,
       clientSecret: process.env.KEYCLOAK_SECRET!,
       issuer: process.env.KEYCLOAK_ISSUER,
+      authorization: {
+        params: {
+          scope: "openid email profile pixelboard",
+        },
+      },
     }),
   ],
   pages: {
