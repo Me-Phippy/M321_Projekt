@@ -79,11 +79,6 @@ class BoardStateService {
 
   constructor() {
     this.apiUrl = process.env.API_URL || "";
-    
-    if (!this.apiUrl) {
-      console.warn("⚠️  API_URL ist nicht gesetzt! BoardStateService wird nicht funktionieren.");
-    }
-    
     // GraphQL Endpoint ist /graphql
     const graphqlUrl = `${this.apiUrl}/graphql`;
     this.graphqlClient = new GraphQLClient(graphqlUrl);
@@ -251,10 +246,6 @@ class BoardStateService {
 
   // Lädt alle Pixels über GraphQL
   private async fetchAllPixelsGraphQL(): Promise<Pixel[][]> {
-    if (!this.apiUrl) {
-      throw new Error("API_URL ist nicht gesetzt");
-    }
-    
     try {
       // Versuche zuerst pixelRange (nur auf neueren Servern verfügbar)
       const response = await this.graphqlClient.request<PixelRangeResponse>(
