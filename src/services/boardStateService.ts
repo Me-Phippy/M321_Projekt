@@ -223,6 +223,7 @@ class BoardStateService {
 
   // Holt ein einzelnes Pixel vom API
   private async fetchSinglePixel(x: number, y: number): Promise<Pixel> {
+    console.log("API URL:", this.apiUrl);
     try {
       const response = await fetch(`${this.apiUrl}/api/color/${x}/${y}`);
 

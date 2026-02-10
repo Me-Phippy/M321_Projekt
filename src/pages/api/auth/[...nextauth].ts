@@ -9,10 +9,6 @@ export const authOptions: AuthOptions = {
       issuer: process.env.KEYCLOAK_ISSUER,
     }),
   ],
-  pages: {
-    signIn: "/api/auth/signin",
-    error: "/api/auth/error",
-  },
   callbacks: {
     async jwt({ token, account }) {
       if (account) {
@@ -25,6 +21,12 @@ export const authOptions: AuthOptions = {
       session.accessToken = token.accessToken as string;
       session.idToken = token.idToken as string;
       return session;
+    },
+    async redirect({ url, baseUrl }) {
+      // Verhindert Redirect-Loops
+      if (url.startsWith("/")) return `${baseUrl}${url}`;
+      else if (new URL(url).origin === baseUrl) return url;
+      return baseUrl;
     },
   },
   debug: true,
