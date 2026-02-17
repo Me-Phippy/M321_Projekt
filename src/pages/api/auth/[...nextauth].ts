@@ -99,6 +99,26 @@ export const authOptions: AuthOptions = {
       session.idToken = token.idToken as string;
       session.expiresAt = token.expiresAt as number;
       session.error = token.error as string | undefined;
+      
+      // Team aus JWT Token extrahieren
+      if (token.idToken) {
+        try {
+          const base64Url = (token.idToken as string).split('.')[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const jsonPayload = decodeURIComponent(
+            atob(base64)
+              .split('')
+              .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+              .join('')
+          );
+          const payload = JSON.parse(jsonPayload);
+          session.team = payload.team ?? 0; // Default 0 falls kein Team im Token
+        } catch (error) {
+          console.error('[Session] Fehler beim Extrahieren des Teams:', error);
+          session.team = 0; // Default bei Fehler
+        }
+      }
+      
       return session;
     },
     async redirect({ url, baseUrl }) {

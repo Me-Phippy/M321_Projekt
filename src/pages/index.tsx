@@ -18,7 +18,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [method, setMethod] = useState<"parallel" | "sequential" | "cache">("cache");
   const [selectedPixel, setSelectedPixel] = useState<Pixel | null>(null);
-  const [selectedTeam, setSelectedTeam] = useState(3);
+  const [selectedTeam, setSelectedTeam] = useState(0); // Default 0, wird aus Session überschrieben
   const [setPixelMessage, setSetPixelMessage] = useState<string | null>(null);
   const [lastSetPixelDuration, setLastSetPixelDuration] = useState<number | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
@@ -88,14 +88,11 @@ export default function Home() {
   };
 
   useEffect(() => {
-    // Set initial pixel (3, 3) with team 3 when page loads
-    const initializePixel = async () => {
-      await setPixel(3, 3, 3, 0, 0, 0);
-    };
+    // Kein initiales Pixel mehr setzen
+    // (wird automatisch gesetzt wenn User auf Board klickt)
 
     // Initial fetch
     fetchPixels(method);
-    initializePixel();
 
     // SSE-Verbindung aufbauen
     console.log("Baue SSE-Verbindung auf...");
@@ -160,6 +157,14 @@ export default function Home() {
     // Set the clicked pixel with selected team (color is determined by backend)
     setPixel(pixel.x, pixel.y, selectedTeam, 0, 0, 0);
   };
+
+  // Team automatisch aus Session setzen
+  useEffect(() => {
+    if (session?.team !== undefined) {
+      setSelectedTeam(session.team);
+      console.log(`[Auto] Team auf ${session.team} gesetzt (aus JWT Token)`);
+    }
+  }, [session?.team]);
 
   // Redirect to login if not authenticated
   useEffect(() => {

@@ -12,6 +12,7 @@ declare module "next-auth" {
     idToken?: string;
     expiresAt?: number; // Unix Timestamp (Sekunden)
     error?: string; // "RefreshAccessTokenError" wenn Refresh fehlschlägt
+    team?: number; // Team-ID aus JWT Token (default 0)
   }
 }
 
