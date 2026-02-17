@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
+import { validateToken } from "@/lib/tokenUtils";
 
 interface SetPixelRequest {
   x: number;
@@ -73,6 +74,26 @@ export default async function handler(
     console.log(
       `Setting pixel at (${x}, ${y}) for team ${team} to RGB(${red}, ${green}, ${blue})`
     );
+
+    // Milestone 4, Aufgabe 2.1: Token-Ablauf prüfen
+    const expiresAt = (session as any).expiresAt;
+    const tokenValidation = validateToken(expiresAt, 'setPixel');
+
+    // Wenn Token abgelaufen ist, Fehler zurückgeben (kein API-Call)
+    if (tokenValidation.isExpired) {
+      console.error('[setPixel] ✗ Token abgelaufen - API-Call wird nicht durchgeführt');
+      return res.status(401).json({
+        success: false,
+        error: `Token abgelaufen: ${tokenValidation.message}. Bitte melden Sie sich erneut an.`,
+        httpStatus: 401,
+        statusText: 'Token Expired',
+      });
+    }
+
+    // Warnung wenn Token bald abläuft (aber trotzdem durchführen)
+    if (tokenValidation.isExpiringSoon) {
+      console.warn('[setPixel] ⚠ Token läuft bald ab - möglicherweise sollte Refresh durchgeführt werden');
+    }
 
     // Start time measurement
     const startTime = Date.now();

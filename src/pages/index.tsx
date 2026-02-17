@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import type { Pixel } from "@/types/pixel";
 import { API_ENDPOINTS } from "@/config/api";
+import { TokenStatus } from "@/components/TokenStatus";
 
 interface PixelsResponse {
   pixels: Pixel[][];
@@ -199,6 +200,7 @@ export default function Home() {
             Pixelboard
           </h1>
           <div className="flex items-center gap-4">
+            <TokenStatus />
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               Angemeldet als: <span className="font-semibold">{session?.user?.name || session?.user?.email}</span>
             </p>
