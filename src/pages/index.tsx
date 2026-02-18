@@ -105,12 +105,15 @@ export default function Home() {
     setRegisterMessage(null);
     
     try {
+      // Team-Name: Nutze NEXT_PUBLIC_TEAM_NAME falls gesetzt, sonst "Team {nummer}"
+      const teamName = process.env.NEXT_PUBLIC_TEAM_NAME || `Team ${selectedTeam}`;
+      
       const response = await fetch("/api/register-team", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ teamName: `Team ${selectedTeam}` }),
+        body: JSON.stringify({ teamName }),
       });
 
       const result = await response.json();
@@ -139,7 +142,8 @@ export default function Home() {
           }
         }
         
-        let message = `${playerStatus} Spieler registriert | ${teamStatus} Team ${selectedTeam} registriert.`;
+        const teamName = process.env.NEXT_PUBLIC_TEAM_NAME || `Team ${selectedTeam}`;
+        let message = `${playerStatus} Spieler registriert | ${teamStatus} ${teamName} registriert.`;
         if (details.length > 0) {
           message += `\n\n${details.join('\n')}`;
         }
@@ -153,7 +157,10 @@ export default function Home() {
           result.results.team.status === 409;
         
         if (playerOkOrRegistered && teamOkOrRegistered) {
-          message += `\n\nJetzt im Admin Panel (http://localhost:5085/Admin) Team ${selectedTeam} auswählen und 'Start Game' klicken!`;
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:5085';
+          if (apiUrl.includes('localhost')) {
+            message += `\n\nJetzt im Admin Panel (${apiUrl}/Admin) Team ${selectedTeam} auswählen und 'Start Game' klicken!`;
+          }
         }
         
         setRegisterMessage(message);
