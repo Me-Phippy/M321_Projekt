@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import type { Pixel } from "@/types/pixel";
 import { API_ENDPOINTS } from "@/config/api";
-import { TokenStatus } from "@/components/TokenStatus";
+import TeamBudget from "@/components/TeamBudget";
+import Leaderboard from "@/components/Leaderboard";
 
 interface PixelsResponse {
   pixels: Pixel[][];
@@ -18,10 +19,12 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [method, setMethod] = useState<"parallel" | "sequential" | "cache">("cache");
   const [selectedPixel, setSelectedPixel] = useState<Pixel | null>(null);
-  const [selectedTeam, setSelectedTeam] = useState(0); // Default 0, wird aus Session überschrieben
+  const [selectedTeam, setSelectedTeam] = useState(3);
   const [setPixelMessage, setSetPixelMessage] = useState<string | null>(null);
   const [lastSetPixelDuration, setLastSetPixelDuration] = useState<number | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [registerMessage, setRegisterMessage] = useState<string | null>(null);
 
   const fetchPixels = (fetchMethod: "parallel" | "sequential" | "cache" = method, showLoading: boolean = true) => {
     if (showLoading) {
@@ -68,6 +71,16 @@ export default function Home() {
         fetchPixels("cache", false);
       } else {
         setLastSetPixelDuration(result.duration);
+        
+        // MS5: Auto-correct team if player is registered with another team
+        if (result.registeredTeam !== undefined) {
+          console.log(`[Frontend] Auto-correcting team to ${result.registeredTeam}`);
+          setSelectedTeam(result.registeredTeam);
+          setSetPixelMessage(`Team automatisch auf Team ${result.registeredTeam} gesetzt (Ihre Registrierung)`);
+          setTimeout(() => setSetPixelMessage(null), 5000);
+          return;
+        }
+        
         // Detaillierte Fehlermeldung mit allen verfügbaren Informationen
         const errorDetails = [
           `✗ HTTP ${result.httpStatus || response.status} ${result.statusText || ''}`,
@@ -87,10 +100,75 @@ export default function Home() {
     }
   };
 
-  useEffect(() => {
-    // Kein initiales Pixel mehr setzen
-    // (wird automatisch gesetzt wenn User auf Board klickt)
+  const registerTeam = async () => {
+    setRegistering(true);
+    setRegisterMessage(null);
+    
+    try {
+      const response = await fetch("/api/register-team", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ teamName: `Team ${selectedTeam}` }),
+      });
 
+      const result = await response.json();
+
+      if (result.success) {
+        const playerStatus = result.results.player.ok ? "✓" : "✗";
+        const teamStatus = result.results.team.ok ? "✓" : "✗";
+        
+        const details = [];
+        if (!result.results.player.ok) {
+          // Prüfe ob Spieler bereits registriert ist
+          if (result.results.player.response?.includes("already registered") || 
+              result.results.player.status === 409) {
+            details.push(`Spieler: Bereits registriert (OK)`);
+          } else {
+            details.push(`Spieler: HTTP ${result.results.player.status} - ${result.results.player.response}`);
+          }
+        }
+        if (!result.results.team.ok) {
+          // Prüfe ob Team bereits registriert ist
+          if (result.results.team.response?.includes("already registered") || 
+              result.results.team.status === 409) {
+            details.push(`Team: Bereits registriert (OK)`);
+          } else {
+            details.push(`Team: HTTP ${result.results.team.status} - ${result.results.team.response}`);
+          }
+        }
+        
+        let message = `${playerStatus} Spieler registriert | ${teamStatus} Team ${selectedTeam} registriert.`;
+        if (details.length > 0) {
+          message += `\n\n${details.join('\n')}`;
+        }
+        
+        // Erfolg wenn beide OK sind ODER bereits registriert
+        const playerOkOrRegistered = result.results.player.ok || 
+          result.results.player.response?.includes("already registered") ||
+          result.results.player.status === 409;
+        const teamOkOrRegistered = result.results.team.ok || 
+          result.results.team.response?.includes("already registered") ||
+          result.results.team.status === 409;
+        
+        if (playerOkOrRegistered && teamOkOrRegistered) {
+          message += `\n\nJetzt im Admin Panel (http://localhost:5085/Admin) Team ${selectedTeam} auswählen und 'Start Game' klicken!`;
+        }
+        
+        setRegisterMessage(message);
+      } else {
+        setRegisterMessage(`✗ Registrierung fehlgeschlagen: ${result.error}`);
+      }
+    } catch (err) {
+      setRegisterMessage(`✗ Fehler: ${String(err)}`);
+    } finally {
+      setRegistering(false);
+      setTimeout(() => setRegisterMessage(null), 15000);
+    }
+  };
+
+  useEffect(() => {
     // Initial fetch
     fetchPixels(method);
 
@@ -158,18 +236,19 @@ export default function Home() {
     setPixel(pixel.x, pixel.y, selectedTeam, 0, 0, 0);
   };
 
-  // Team automatisch aus Session setzen
-  useEffect(() => {
-    if (session?.team !== undefined) {
-      setSelectedTeam(session.team);
-      console.log(`[Auto] Team auf ${session.team} gesetzt (aus JWT Token)`);
-    }
-  }, [session?.team]);
-
   // Redirect to login if not authenticated
   useEffect(() => {
     if (status === "unauthenticated") {
       signIn("keycloak", { callbackUrl: window.location.href });
+    }
+
+    // MS4: Auto-set team from JWT token
+    if (session && (session as any).team !== undefined) {
+      const jwtTeam = parseInt((session as any).team);
+      if (!isNaN(jwtTeam) && jwtTeam !== selectedTeam) {
+        console.log(`[MS4] Auto-setting team from JWT token: ${jwtTeam}`);
+        setSelectedTeam(jwtTeam);
+      }
     }
 
     // JWT Token (id_token) in Konsole ausgeben für Aufgabe 5
@@ -205,7 +284,6 @@ export default function Home() {
             Pixelboard
           </h1>
           <div className="flex items-center gap-4">
-            <TokenStatus />
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               Angemeldet als: <span className="font-semibold">{session?.user?.name || session?.user?.email}</span>
             </p>
@@ -310,6 +388,19 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Team Budget & Leaderboard */}
+        <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Team Budget */}
+          <div className="lg:col-span-1">
+            <TeamBudget teamId={selectedTeam} autoRefresh={true} refreshInterval={5000} />
+          </div>
+
+          {/* Leaderboard */}
+          <div className="lg:col-span-2">
+            <Leaderboard autoRefresh={true} refreshInterval={10000} />
+          </div>
+        </div>
+
         {/* Pixel setzen - Team auswählen */}
         <div className="w-full max-w-2xl bg-white dark:bg-zinc-900 p-6 rounded-lg shadow-lg">
           <h2 className="text-2xl font-bold mb-4 text-zinc-900 dark:text-zinc-50">
@@ -324,15 +415,38 @@ export default function Home() {
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
               Team (0-16):
             </label>
-            <input
-              type="number"
-              min="0"
-              max="16"
-              value={selectedTeam}
-              onChange={(e) => setSelectedTeam(parseInt(e.target.value) || 0)}
-              className="w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
-            />
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min="0"
+                max="16"
+                value={selectedTeam}
+                onChange={(e) => setSelectedTeam(parseInt(e.target.value) || 0)}
+                className="flex-1 px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
+              />
+              <button
+                onClick={registerTeam}
+                disabled={registering}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors whitespace-nowrap"
+              >
+                {registering ? "Registriere..." : "Team Registrieren"}
+              </button>
+            </div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+              Wenn "Team X is not registered" erscheint, klicken Sie auf "Team Registrieren"
+            </p>
           </div>
+
+          {/* Registrierungs-Nachricht */}
+          {registerMessage && (
+            <div className={`mb-4 p-4 rounded-lg border-2 ${
+              registerMessage.includes("✓")
+                ? "bg-blue-50 dark:bg-blue-950 border-blue-500 text-blue-900 dark:text-blue-100"
+                : "bg-red-50 dark:bg-red-950 border-red-500 text-red-900 dark:text-red-100"
+            }`}>
+              <p className="text-sm whitespace-pre-line">{registerMessage}</p>
+            </div>
+          )}
 
           {/* Status Nachricht */}
           {setPixelMessage && (
