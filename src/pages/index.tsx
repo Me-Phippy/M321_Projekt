@@ -23,6 +23,8 @@ export default function Home() {
   const [setPixelMessage, setSetPixelMessage] = useState<string | null>(null);
   const [lastSetPixelDuration, setLastSetPixelDuration] = useState<number | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [registerMessage, setRegisterMessage] = useState<string | null>(null);
 
   const fetchPixels = (fetchMethod: "parallel" | "sequential" | "cache" = method, showLoading: boolean = true) => {
     if (showLoading) {
@@ -98,15 +100,77 @@ export default function Home() {
     }
   };
 
-  useEffect(() => {
-    // Set initial pixel (3, 3) with team 3 when page loads
-    const initializePixel = async () => {
-      await setPixel(3, 3, 3, 0, 0, 0);
-    };
+  const registerTeam = async () => {
+    setRegistering(true);
+    setRegisterMessage(null);
+    
+    try {
+      const response = await fetch("/api/register-team", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ teamName: `Team ${selectedTeam}` }),
+      });
 
+      const result = await response.json();
+
+      if (result.success) {
+        const playerStatus = result.results.player.ok ? "✓" : "✗";
+        const teamStatus = result.results.team.ok ? "✓" : "✗";
+        
+        const details = [];
+        if (!result.results.player.ok) {
+          // Prüfe ob Spieler bereits registriert ist
+          if (result.results.player.response?.includes("already registered") || 
+              result.results.player.status === 409) {
+            details.push(`Spieler: Bereits registriert (OK)`);
+          } else {
+            details.push(`Spieler: HTTP ${result.results.player.status} - ${result.results.player.response}`);
+          }
+        }
+        if (!result.results.team.ok) {
+          // Prüfe ob Team bereits registriert ist
+          if (result.results.team.response?.includes("already registered") || 
+              result.results.team.status === 409) {
+            details.push(`Team: Bereits registriert (OK)`);
+          } else {
+            details.push(`Team: HTTP ${result.results.team.status} - ${result.results.team.response}`);
+          }
+        }
+        
+        let message = `${playerStatus} Spieler registriert | ${teamStatus} Team ${selectedTeam} registriert.`;
+        if (details.length > 0) {
+          message += `\n\n${details.join('\n')}`;
+        }
+        
+        // Erfolg wenn beide OK sind ODER bereits registriert
+        const playerOkOrRegistered = result.results.player.ok || 
+          result.results.player.response?.includes("already registered") ||
+          result.results.player.status === 409;
+        const teamOkOrRegistered = result.results.team.ok || 
+          result.results.team.response?.includes("already registered") ||
+          result.results.team.status === 409;
+        
+        if (playerOkOrRegistered && teamOkOrRegistered) {
+          message += `\n\nJetzt im Admin Panel (http://localhost:5085/Admin) Team ${selectedTeam} auswählen und 'Start Game' klicken!`;
+        }
+        
+        setRegisterMessage(message);
+      } else {
+        setRegisterMessage(`✗ Registrierung fehlgeschlagen: ${result.error}`);
+      }
+    } catch (err) {
+      setRegisterMessage(`✗ Fehler: ${String(err)}`);
+    } finally {
+      setRegistering(false);
+      setTimeout(() => setRegisterMessage(null), 15000);
+    }
+  };
+
+  useEffect(() => {
     // Initial fetch
     fetchPixels(method);
-    initializePixel();
 
     // SSE-Verbindung aufbauen
     console.log("Baue SSE-Verbindung auf...");
@@ -351,15 +415,38 @@ export default function Home() {
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
               Team (0-16):
             </label>
-            <input
-              type="number"
-              min="0"
-              max="16"
-              value={selectedTeam}
-              onChange={(e) => setSelectedTeam(parseInt(e.target.value) || 0)}
-              className="w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
-            />
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min="0"
+                max="16"
+                value={selectedTeam}
+                onChange={(e) => setSelectedTeam(parseInt(e.target.value) || 0)}
+                className="flex-1 px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
+              />
+              <button
+                onClick={registerTeam}
+                disabled={registering}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors whitespace-nowrap"
+              >
+                {registering ? "Registriere..." : "Team Registrieren"}
+              </button>
+            </div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+              Wenn "Team X is not registered" erscheint, klicken Sie auf "Team Registrieren"
+            </p>
           </div>
+
+          {/* Registrierungs-Nachricht */}
+          {registerMessage && (
+            <div className={`mb-4 p-4 rounded-lg border-2 ${
+              registerMessage.includes("✓")
+                ? "bg-blue-50 dark:bg-blue-950 border-blue-500 text-blue-900 dark:text-blue-100"
+                : "bg-red-50 dark:bg-red-950 border-red-500 text-red-900 dark:text-red-100"
+            }`}>
+              <p className="text-sm whitespace-pre-line">{registerMessage}</p>
+            </div>
+          )}
 
           {/* Status Nachricht */}
           {setPixelMessage && (

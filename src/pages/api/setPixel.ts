@@ -180,7 +180,7 @@ export default async function handler(
               "Content-Type": "application/json",
               ...(idToken && { "Authorization": `Bearer ${idToken}` }),
             },
-            body: JSON.stringify(playerName),
+            body: JSON.stringify({ Name: playerName }),
           });
 
           if (registerResponse.ok) {
