@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import type { Pixel } from "@/types/pixel";
 import { API_ENDPOINTS } from "@/config/api";
-import { TokenStatus } from "@/components/TokenStatus";
+import TeamBudget from "@/components/TeamBudget";
+import Leaderboard from "@/components/Leaderboard";
 
 interface PixelsResponse {
   pixels: Pixel[][];
@@ -18,7 +19,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [method, setMethod] = useState<"parallel" | "sequential" | "cache">("cache");
   const [selectedPixel, setSelectedPixel] = useState<Pixel | null>(null);
-  const [selectedTeam, setSelectedTeam] = useState(0); // Default 0, wird aus Session überschrieben
+  const [selectedTeam, setSelectedTeam] = useState(3);
   const [setPixelMessage, setSetPixelMessage] = useState<string | null>(null);
   const [lastSetPixelDuration, setLastSetPixelDuration] = useState<number | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
@@ -68,6 +69,16 @@ export default function Home() {
         fetchPixels("cache", false);
       } else {
         setLastSetPixelDuration(result.duration);
+        
+        // MS5: Auto-correct team if player is registered with another team
+        if (result.registeredTeam !== undefined) {
+          console.log(`[Frontend] Auto-correcting team to ${result.registeredTeam}`);
+          setSelectedTeam(result.registeredTeam);
+          setSetPixelMessage(`Team automatisch auf Team ${result.registeredTeam} gesetzt (Ihre Registrierung)`);
+          setTimeout(() => setSetPixelMessage(null), 5000);
+          return;
+        }
+        
         // Detaillierte Fehlermeldung mit allen verfügbaren Informationen
         const errorDetails = [
           `✗ HTTP ${result.httpStatus || response.status} ${result.statusText || ''}`,
@@ -88,11 +99,14 @@ export default function Home() {
   };
 
   useEffect(() => {
-    // Kein initiales Pixel mehr setzen
-    // (wird automatisch gesetzt wenn User auf Board klickt)
+    // Set initial pixel (3, 3) with team 3 when page loads
+    const initializePixel = async () => {
+      await setPixel(3, 3, 3, 0, 0, 0);
+    };
 
     // Initial fetch
     fetchPixels(method);
+    initializePixel();
 
     // SSE-Verbindung aufbauen
     console.log("Baue SSE-Verbindung auf...");
@@ -158,18 +172,19 @@ export default function Home() {
     setPixel(pixel.x, pixel.y, selectedTeam, 0, 0, 0);
   };
 
-  // Team automatisch aus Session setzen
-  useEffect(() => {
-    if (session?.team !== undefined) {
-      setSelectedTeam(session.team);
-      console.log(`[Auto] Team auf ${session.team} gesetzt (aus JWT Token)`);
-    }
-  }, [session?.team]);
-
   // Redirect to login if not authenticated
   useEffect(() => {
     if (status === "unauthenticated") {
       signIn("keycloak", { callbackUrl: window.location.href });
+    }
+
+    // MS4: Auto-set team from JWT token
+    if (session && (session as any).team !== undefined) {
+      const jwtTeam = parseInt((session as any).team);
+      if (!isNaN(jwtTeam) && jwtTeam !== selectedTeam) {
+        console.log(`[MS4] Auto-setting team from JWT token: ${jwtTeam}`);
+        setSelectedTeam(jwtTeam);
+      }
     }
 
     // JWT Token (id_token) in Konsole ausgeben für Aufgabe 5
@@ -205,7 +220,6 @@ export default function Home() {
             Pixelboard
           </h1>
           <div className="flex items-center gap-4">
-            <TokenStatus />
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               Angemeldet als: <span className="font-semibold">{session?.user?.name || session?.user?.email}</span>
             </p>
@@ -307,6 +321,19 @@ export default function Home() {
                 Letzter Request
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* Team Budget & Leaderboard */}
+        <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Team Budget */}
+          <div className="lg:col-span-1">
+            <TeamBudget teamId={selectedTeam} autoRefresh={true} refreshInterval={5000} />
+          </div>
+
+          {/* Leaderboard */}
+          <div className="lg:col-span-2">
+            <Leaderboard autoRefresh={true} refreshInterval={10000} />
           </div>
         </div>
 

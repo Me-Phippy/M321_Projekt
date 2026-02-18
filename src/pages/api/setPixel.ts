@@ -131,6 +131,118 @@ export default async function handler(
         `Failed to set pixel (${x},${y}): ${response.status} - ${responseText} (${duration}ms)`
       );
       
+      // MS5: Handle "Player registered with another team"
+      if (response.status === 400 && responseText.includes("Player registered with another team")) {
+        console.log('[setPixel] Player registered with wrong team - fetching player info...');
+        
+        try {
+          // Get user's sub claim (Keycloak ID)
+          const userId = (session as any).sub || (session as any).user?.id;
+          
+          if (userId) {
+            // Fetch player info to get the registered team
+            const playerResponse = await fetch(`${API_URL}/api/player/${userId}`, {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+              },
+            });
+
+            if (playerResponse.ok) {
+              const playerData = await playerResponse.json();
+              console.log(`[setPixel] Player is registered with Team ${playerData.team}. Informing frontend...`);
+              
+              return res.status(400).json({
+                success: false,
+                error: `Sie sind mit Team ${playerData.team} registriert. Bitte wählen Sie Team ${playerData.team} aus.`,
+                httpStatus: 400,
+                statusText: 'Wrong Team',
+                serverResponse: responseText,
+                duration,
+                registeredTeam: playerData.team, // Frontend kann das automatisch setzen
+              });
+            }
+          }
+        } catch (err) {
+          console.error('[setPixel] Error fetching player info:', err);
+        }
+      }
+      
+      // MS5: Auto-Register bei "User not registered"
+      if (response.status === 400 && responseText.includes("User not registered")) {
+        console.log('[setPixel] User not registered - attempting auto-registration...');
+        
+        try {
+          const playerName = session.user?.name || "Player";
+          const registerResponse = await fetch(`${API_URL}/api/player/register`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(idToken && { "Authorization": `Bearer ${idToken}` }),
+            },
+            body: JSON.stringify(playerName),
+          });
+
+          if (registerResponse.ok) {
+            console.log('[setPixel] ✓ Player registration successful - now registering team...');
+            
+            // Register team with a default name
+            const teamName = `Team ${team}`;
+            const teamRegisterResponse = await fetch(`${API_URL}/api/team/register`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(idToken && { "Authorization": `Bearer ${idToken}` }),
+              },
+              body: JSON.stringify(teamName),
+            });
+
+            if (teamRegisterResponse.ok) {
+              console.log(`[setPixel] ✓ Team registration successful - now retrying pixel placement...`);
+            } else {
+              const teamError = await teamRegisterResponse.text();
+              console.log(`[setPixel] Team registration: ${teamRegisterResponse.status} - ${teamError} (continuing anyway)`);
+            }
+            
+            // Retry pixel placement after successful registration
+            const retryResponse = await fetch(`${API_URL}/api/color`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(idToken && { "Authorization": `Bearer ${idToken}` }),
+              },
+              body: JSON.stringify({
+                X: x,
+                Y: y,
+                Team: team,
+                Red: red,
+                Green: green,
+                Blue: blue,
+              }),
+            });
+
+            const retryText = await retryResponse.text();
+            const retryDuration = Date.now() - startTime;
+
+            if (retryResponse.ok) {
+              console.log(`✓ Pixel (${x}, ${y}) set after auto-registration: ${retryText} (${retryDuration}ms)`);
+              return res.status(200).json({
+                success: true,
+                message: retryText,
+                duration: retryDuration,
+              });
+            } else {
+              console.error(`Retry failed: ${retryResponse.status} - ${retryText}`);
+            }
+          } else {
+            const registerError = await registerResponse.text();
+            console.error(`Auto-registration failed: ${registerResponse.status} - ${registerError}`);
+          }
+        } catch (regError) {
+          console.error('Auto-registration error:', regError);
+        }
+      }
+      
       // Detaillierte Fehlermeldung mit HTTP-Status und Server-Response
       let errorMessage = responseText || response.statusText;
       
