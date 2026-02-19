@@ -15,7 +15,9 @@ export default async function handler(
 
   // Session prüfen
   const session = await getServerSession(req, res, authOptions);
-  if (!session?.accessToken) {
+  const idToken = (session as any)?.idToken;
+  
+  if (!session || !idToken) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -29,7 +31,7 @@ export default async function handler(
     // Hole Team Game Info vom Game Server
     const response = await fetch(`${API_URL}/api/game/team/${id}`, {
       headers: {
-        Authorization: `Bearer ${session.accessToken}`,
+        Authorization: `Bearer ${idToken}`,
       },
     });
 
@@ -42,7 +44,15 @@ export default async function handler(
     }
 
     const data = await response.json();
-    return res.status(200).json(data);
+    
+    // Server liefert PascalCase (Score, PaintBudget), wir wollen camelCase
+    const mappedData = {
+      id: parseInt(id),
+      score: parseInt(data.Score) || 0,
+      colorBudget: parseInt(data.PaintBudget) || 0,
+    };
+    
+    return res.status(200).json(mappedData);
 
   } catch (error) {
     console.error("Error fetching team game info:", error);
