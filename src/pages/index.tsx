@@ -4,6 +4,10 @@ import type { Pixel } from "@/types/pixel";
 import { API_ENDPOINTS } from "@/config/api";
 import TeamBudget from "@/components/TeamBudget";
 import Leaderboard from "@/components/Leaderboard";
+import CompactTeamOverview from "@/components/CompactTeamOverview";
+import Toast from "@/components/Toast";
+import { TeamService } from "@/services/teamService";
+import type { TeamInfo, TeamGameInfo } from "@/types/team";
 
 interface PixelsResponse {
   pixels: Pixel[][];
@@ -21,10 +25,20 @@ export default function Home() {
   const [selectedPixel, setSelectedPixel] = useState<Pixel | null>(null);
   const [selectedTeam, setSelectedTeam] = useState(3);
   const [setPixelMessage, setSetPixelMessage] = useState<string | null>(null);
+  const [setPixelMessageType, setSetPixelMessageType] = useState<"success" | "error" | "info">("info");
   const [lastSetPixelDuration, setLastSetPixelDuration] = useState<number | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [registerMessage, setRegisterMessage] = useState<string | null>(null);
+  const [registerMessageType, setRegisterMessageType] = useState<"success" | "error" | "info">("info");
+  const [viewMode, setViewMode] = useState<"competitive" | "full">("competitive");
+  const [optimisticPixels, setOptimisticPixels] = useState<Map<string, {color: {red: number, green: number, blue: number}, timestamp: number}>>(new Map());
+  const [teamInfo, setTeamInfo] = useState<TeamInfo | null>(null);
+  const [teamGameInfo, setTeamGameInfo] = useState<TeamGameInfo | null>(null);
+  const [currentBudget, setCurrentBudget] = useState<number>(0);
+  const [autoPaintMode, setAutoPaintMode] = useState<boolean>(false);
+  const [pixelQueue, setPixelQueue] = useState<Array<{x: number, y: number}>>([]); 
+  const [isProcessingQueue, setIsProcessingQueue] = useState<boolean>(false);
 
   const fetchPixels = (fetchMethod: "parallel" | "sequential" | "cache" = method, showLoading: boolean = true) => {
     if (showLoading) {
@@ -50,7 +64,29 @@ export default function Home() {
       });
   };
 
-  const setPixel = async (x: number, y: number, team: number, red: number, green: number, blue: number) => {
+  const setPixel = async (x: number, y: number, team: number, red: number, green: number, blue: number): Promise<boolean> => {
+    const pixelKey = `${x}-${y}`;
+    
+    // Optimistic Update: Sofort UI aktualisieren
+    const previousData = data;
+    if (data) {
+      const newPixels = data.pixels.map(row => 
+        row.map(pixel => 
+          pixel.x === x && pixel.y === y 
+            ? { ...pixel, color: { red, green, blue } }
+            : pixel
+        )
+      );
+      setData({ ...data, pixels: newPixels });
+      
+      // Markiere dieses Pixel als optimistisch gesetzt
+      setOptimisticPixels(prev => {
+        const next = new Map(prev);
+        next.set(pixelKey, { color: { red, green, blue }, timestamp: Date.now() });
+        return next;
+      });
+    }
+
     try {
       const response = await fetch("/api/setPixel", {
         method: "POST",
@@ -65,38 +101,81 @@ export default function Home() {
       // Show server response with HTTP status and duration
       if (result.success) {
         setLastSetPixelDuration(result.duration);
-        setSetPixelMessage(`✓ HTTP ${response.status}: ${result.message} (${result.duration}ms)`);
+        setSetPixelMessage(`Pixel gesetzt (${result.duration}ms)`);
+        setSetPixelMessageType("success");
         setTimeout(() => setSetPixelMessage(null), 3000);
-        // Fetch updated board state from backend (without showing loading spinner)
-        fetchPixels("cache", false);
+        
+        // Budget reduzieren nach erfolgreichem POST
+        setCurrentBudget(prev => Math.max(0, prev - 1));
+        
+        // Entferne optimistic pixel nach 2 Sekunden (Server sollte bis dahin SSE-Update gesendet haben)
+        setTimeout(() => {
+          setOptimisticPixels(prev => {
+            const next = new Map(prev);
+            next.delete(pixelKey);
+            return next;
+          });
+        }, 2000);
+        
+        return true;
       } else {
+        // Rollback bei Fehler
+        if (previousData) {
+          setData(previousData);
+        }
+        
+        // Entferne optimistic pixel
+        setOptimisticPixels(prev => {
+          const next = new Map(prev);
+          next.delete(pixelKey);
+          return next;
+        });
+        
         setLastSetPixelDuration(result.duration);
         
         // MS5: Auto-correct team if player is registered with another team
         if (result.registeredTeam !== undefined) {
           console.log(`[Frontend] Auto-correcting team to ${result.registeredTeam}`);
           setSelectedTeam(result.registeredTeam);
-          setSetPixelMessage(`Team automatisch auf Team ${result.registeredTeam} gesetzt (Ihre Registrierung)`);
+          setSetPixelMessage(`Team automatisch auf Team ${result.registeredTeam} gesetzt`);
+          setSetPixelMessageType("info");
           setTimeout(() => setSetPixelMessage(null), 5000);
           return;
         }
         
         // Detaillierte Fehlermeldung mit allen verfügbaren Informationen
         const errorDetails = [
-          `✗ HTTP ${result.httpStatus || response.status} ${result.statusText || ''}`,
-          `Fehler: ${result.error}`,
-          result.serverResponse ? `Server: ${result.serverResponse}` : null,
-          `Dauer: ${result.duration}ms`
-        ].filter(Boolean).join(' | ');
+          `HTTP ${result.httpStatus || response.status}`,
+          result.error,
+          result.serverResponse,
+        ].filter(Boolean).join('\n');
         
         setSetPixelMessage(errorDetails);
+        setSetPixelMessageType("error");
         console.error("Pixel setzen fehlgeschlagen:", result);
         setTimeout(() => setSetPixelMessage(null), 8000);
+        
+        return false;
       }
     } catch (err) {
+      // Rollback bei Netzwerkfehler
+      if (previousData) {
+        setData(previousData);
+      }
+      
+      // Entferne optimistic pixel
+      setOptimisticPixels(prev => {
+        const next = new Map(prev);
+        next.delete(pixelKey);
+        return next;
+      });
+      
       console.error("Failed to set pixel:", err);
-      setSetPixelMessage(`✗ Netzwerkfehler: ${String(err)}`);
+      setSetPixelMessage(`Netzwerkfehler: ${String(err)}`);
+      setSetPixelMessageType("error");
       setTimeout(() => setSetPixelMessage(null), 8000);
+      
+      return false;
     }
   };
 
@@ -143,10 +222,7 @@ export default function Home() {
         }
         
         const teamName = process.env.NEXT_PUBLIC_TEAM_NAME || `Team ${selectedTeam}`;
-        let message = `${playerStatus} Spieler registriert | ${teamStatus} ${teamName} registriert.`;
-        if (details.length > 0) {
-          message += `\n\n${details.join('\n')}`;
-        }
+        let message = `Spieler registriert | ${teamName} registriert`;
         
         // Erfolg wenn beide OK sind ODER bereits registriert
         const playerOkOrRegistered = result.results.player.ok || 
@@ -156,19 +232,15 @@ export default function Home() {
           result.results.team.response?.includes("already registered") ||
           result.results.team.status === 409;
         
-        if (playerOkOrRegistered && teamOkOrRegistered) {
-          const apiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:5085';
-          if (apiUrl.includes('localhost')) {
-            message += `\n\nJetzt im Admin Panel (${apiUrl}/Admin) Team ${selectedTeam} auswählen und 'Start Game' klicken!`;
-          }
-        }
-        
         setRegisterMessage(message);
+        setRegisterMessageType(playerOkOrRegistered && teamOkOrRegistered ? "success" : "info");
       } else {
-        setRegisterMessage(`✗ Registrierung fehlgeschlagen: ${result.error}`);
+        setRegisterMessage(`Registrierung fehlgeschlagen: ${result.error}`);
+        setRegisterMessageType("error");
       }
     } catch (err) {
-      setRegisterMessage(`✗ Fehler: ${String(err)}`);
+      setRegisterMessage(`Fehler: ${String(err)}`);
+      setRegisterMessageType("error");
     } finally {
       setRegistering(false);
       setTimeout(() => setRegisterMessage(null), 15000);
@@ -193,15 +265,39 @@ export default function Home() {
       try {
         const update = JSON.parse(event.data);
         if (update.pixels) {
-          // Aktualisiere Pixel-Farben direkt im DOM
-          update.pixels.forEach((row: Pixel[], x: number) => {
-            row.forEach((pixel: Pixel, y: number) => {
-              const element = document.getElementById(`pixel-${x}-${y}`);
-              if (element) {
-                const { red, green, blue } = pixel.color;
-                element.style.backgroundColor = `rgb(${red}, ${green}, ${blue})`;
-              }
+          // Aktualisiere Pixel-Farben direkt im DOM, aber überspringe optimistische Pixel
+          setOptimisticPixels(currentOptimistic => {
+            update.pixels.forEach((row: Pixel[], x: number) => {
+              row.forEach((pixel: Pixel, y: number) => {
+                const pixelKey = `${x}-${y}`;
+                const element = document.getElementById(`pixel-${x}-${y}`);
+                if (element) {
+                  const optimisticPixel = currentOptimistic.get(pixelKey);
+                  
+                  // Wenn optimistisch gesetzt UND noch frisch (< 3 Sekunden alt), behalte optimistische Farbe
+                  if (optimisticPixel && (Date.now() - optimisticPixel.timestamp < 3000)) {
+                    const { red, green, blue } = optimisticPixel.color;
+                    element.style.backgroundColor = `rgb(${red}, ${green}, ${blue})`;
+                  } else {
+                    // Sonst nutze Server-Update
+                    const { red, green, blue } = pixel.color;
+                    element.style.backgroundColor = `rgb(${red}, ${green}, ${blue})`;
+                  }
+                }
+              });
             });
+            
+            // Entferne alte optimistische Pixel (älter als 3 Sekunden)
+            const now = Date.now();
+            const updated = new Map(currentOptimistic);
+            let changed = false;
+            for (const [key, value] of updated.entries()) {
+              if (now - value.timestamp >= 3000) {
+                updated.delete(key);
+                changed = true;
+              }
+            }
+            return changed ? updated : currentOptimistic;
           });
 
           // Aktualisiere auch den State für initiales Rendering und andere UI-Elemente
@@ -239,9 +335,123 @@ export default function Home() {
 
   const handlePixelClick = (pixel: Pixel) => {
     setSelectedPixel(pixel);
-    // Set the clicked pixel with selected team (color is determined by backend)
-    setPixel(pixel.x, pixel.y, selectedTeam, 0, 0, 0);
+    
+    // Validierung: Prüfe ob Teamfarbe geladen ist
+    if (!teamInfo?.color) {
+      setSetPixelMessage("Team-Farbe wird geladen...");
+      setSetPixelMessageType("info");
+      setTimeout(() => setSetPixelMessage(null), 2000);
+      return;
+    }
+    
+    const { red, green, blue } = teamInfo.color;
+    
+    // Validierung: Prüfe ob Pixel bereits in eigener Farbe
+    const isSameColor = pixel.color.red === red && 
+                        pixel.color.green === green && 
+                        pixel.color.blue === blue;
+    
+    if (isSameColor) {
+      setSetPixelMessage("Pixel ist bereits in deiner Farbe!");
+      setSetPixelMessageType("info");
+      setTimeout(() => setSetPixelMessage(null), 2000);
+      return;
+    }
+    
+    // Auto-Paint Mode: Zu Queue hinzufügen
+    if (autoPaintMode) {
+      // Prüfe ob Pixel bereits in Queue
+      const isInQueue = pixelQueue.some(p => p.x === pixel.x && p.y === pixel.y);
+      if (isInQueue) {
+        setSetPixelMessage("Pixel bereits in Queue!");
+        setSetPixelMessageType("info");
+        setTimeout(() => setSetPixelMessage(null), 2000);
+        return;
+      }
+      
+      setPixelQueue(prev => [...prev, { x: pixel.x, y: pixel.y }]);
+      setSetPixelMessage(`Pixel zur Queue hinzugefügt (${pixelQueue.length + 1} in Warteschlange)`);
+      setSetPixelMessageType("info");
+      setTimeout(() => setSetPixelMessage(null), 2000);
+      return;
+    }
+    
+    // Normal Mode: Validierung ob genug Budget
+    if (currentBudget <= 0) {
+      setSetPixelMessage("Kein Farbbudget mehr! Warte auf Regeneration...");
+      setSetPixelMessageType("error");
+      setTimeout(() => setSetPixelMessage(null), 3000);
+      return;
+    }
+    
+    // Alles OK: Pixel setzen
+    setPixel(pixel.x, pixel.y, selectedTeam, red, green, blue);
   };
+
+  // Load team color when selectedTeam changes
+  useEffect(() => {
+    const loadTeamInfo = async () => {
+      const info = await TeamService.getTeamInfo(selectedTeam);
+      if (info) {
+        setTeamInfo(info);
+        console.log(`Team ${selectedTeam} Farbe geladen: RGB(${info.color.red}, ${info.color.green}, ${info.color.blue})`);
+      } else {
+        setTeamInfo(null);
+      }
+    };
+    loadTeamInfo();
+  }, [selectedTeam]);
+
+  // Load and refresh team game info (budget)
+  useEffect(() => {
+    const loadGameInfo = async () => {
+      const gameInfo = await TeamService.getTeamGameInfo(selectedTeam);
+      if (gameInfo) {
+        setTeamGameInfo(gameInfo);
+        setCurrentBudget(gameInfo.colorBudget);
+        console.log(`Team ${selectedTeam} Budget: ${gameInfo.colorBudget}%`);
+      }
+    };
+    
+    loadGameInfo();
+    
+    // Refresh budget alle 5 Sekunden
+    const interval = setInterval(loadGameInfo, 5000);
+    return () => clearInterval(interval);
+  }, [selectedTeam]);
+
+  // Auto-Paint Queue Processor
+  useEffect(() => {
+    if (!autoPaintMode || pixelQueue.length === 0 || isProcessingQueue || currentBudget <= 0 || !teamInfo?.color) {
+      return;
+    }
+    
+    const processQueue = async () => {
+      setIsProcessingQueue(true);
+      
+      const nextPixel = pixelQueue[0];
+      const { red, green, blue } = teamInfo.color;
+      
+      console.log(`[Auto-Paint] Verarbeite Pixel (${nextPixel.x}, ${nextPixel.y}), Queue: ${pixelQueue.length}, Budget: ${currentBudget}`);
+      
+      const success = await setPixel(nextPixel.x, nextPixel.y, selectedTeam, red, green, blue);
+      
+      // Entferne Pixel aus Queue (egal ob erfolgreich oder nicht)
+      setPixelQueue(prev => prev.slice(1));
+      
+      setIsProcessingQueue(false);
+      
+      if (success) {
+        console.log(`[Auto-Paint] Pixel erfolgreich gesetzt, verbleibend: ${pixelQueue.length - 1}`);
+      } else {
+        console.log(`[Auto-Paint] Pixel setzen fehlgeschlagen, überspringe`);
+      }
+    };
+    
+    // Kurze Verzögerung zwischen Pixels um Server nicht zu überlasten
+    const timeout = setTimeout(processQueue, 500);
+    return () => clearTimeout(timeout);
+  }, [autoPaintMode, pixelQueue, isProcessingQueue, currentBudget, teamInfo, selectedTeam]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -266,6 +476,14 @@ export default function Home() {
     }
   }, [status, session]);
 
+  // Auto-set method to cache in competitive mode
+  useEffect(() => {
+    if (viewMode === "competitive" && method !== "cache") {
+      setMethod("cache");
+      fetchPixels("cache", false);
+    }
+  }, [viewMode]);
+
   // Show loading while checking authentication
   if (status === "loading") {
     return (
@@ -284,286 +502,370 @@ export default function Home() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-4 dark:bg-black">
-      <main className="flex flex-col items-center gap-6 w-full max-w-6xl">
-        <div className="w-full flex justify-between items-center">
-          <h1 className="text-4xl font-bold text-black dark:text-zinc-50">
-            Pixelboard
-          </h1>
+    <div className="min-h-screen bg-zinc-900 text-zinc-100">
+      {/* Toast Notifications */}
+      {setPixelMessage && (
+        <Toast
+          message={setPixelMessage}
+          type={setPixelMessageType}
+          onClose={() => setSetPixelMessage(null)}
+        />
+      )}
+      {registerMessage && (
+        <Toast
+          message={registerMessage}
+          type={registerMessageType}
+          onClose={() => setRegisterMessage(null)}
+        />
+      )}
+
+      {/* Header */}
+      <header className="bg-zinc-800/80 backdrop-blur-sm border-b border-zinc-700 sticky top-0 z-40">
+        <div className="max-w-screen-2xl mx-auto px-4 py-3 flex justify-between items-center">
+          <div className="flex items-center gap-6">
+            <h1 className="text-2xl font-bold">Pixelboard</h1>
+            <div className={`px-3 py-1 rounded-full flex items-center gap-2 text-xs ${
+              sseConnected ? "bg-green-900/50 text-green-300" : "bg-red-900/50 text-red-300"
+            }`}>
+              <div className={`w-2 h-2 rounded-full ${sseConnected ? "bg-green-400 animate-pulse" : "bg-red-400"}`}></div>
+              {sseConnected ? "Live" : "Offline"}
+            </div>
+          </div>
+          
           <div className="flex items-center gap-4">
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Angemeldet als: <span className="font-semibold">{session?.user?.name || session?.user?.email}</span>
-            </p>
+            {/* View Mode Switch */}
+            <div className="flex bg-zinc-700/50 rounded-lg p-1">
+              <button
+                onClick={() => setViewMode("competitive")}
+                className={`px-3 py-1 text-xs rounded transition-colors ${
+                  viewMode === "competitive" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                Competitive
+              </button>
+              <button
+                onClick={() => setViewMode("full")}
+                className={`px-3 py-1 text-xs rounded transition-colors ${
+                  viewMode === "full" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                Full
+              </button>
+            </div>
+            
+            <span className="text-sm text-zinc-400">{session?.user?.name || session?.user?.email}</span>
             <button
               onClick={() => {
-                // Keycloak Federated Logout - auch die Keycloak-Session beenden
                 const keycloakIssuer = process.env.NEXT_PUBLIC_KEYCLOAK_ISSUER || "http://localhost:18080/realms/pixelboard-test";
                 const idToken = session?.idToken;
-                const logoutUrl = `${keycloakIssuer}/protocol/openid-connect/logout` +
-                  `?post_logout_redirect_uri=${encodeURIComponent(window.location.origin)}` +
-                  (idToken ? `&id_token_hint=${idToken}` : "");
-
-                // Erst lokale Session löschen, dann zu Keycloak-Logout weiterleiten
-                signOut({ redirect: false }).then(() => {
-                  window.location.href = logoutUrl;
-                });
+                const logoutUrl = `${keycloakIssuer}/protocol/openid-connect/logout?post_logout_redirect_uri=${encodeURIComponent(window.location.origin)}${idToken ? `&id_token_hint=${idToken}` : ""}`;
+                signOut({ redirect: false }).then(() => window.location.href = logoutUrl);
               }}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              className="px-3 py-1 bg-red-600/80 hover:bg-red-600 rounded text-sm transition-colors"
             >
-              Abmelden
+              Logout
             </button>
           </div>
         </div>
+      </header>
 
-        {/* SSE-Verbindungsstatus */}
-        <div className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
-          sseConnected
-            ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100"
-            : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-100"
-        }`}>
-          <div className={`w-2 h-2 rounded-full ${sseConnected ? "bg-green-600 animate-pulse" : "bg-red-600"}`}></div>
-          <span className="text-sm font-medium">
-            {sseConnected ? "Live-Updates aktiv (SSE)" : "Live-Updates getrennt"}
-          </span>
-        </div>
-
-        {/* Methodenauswahl */}
-        <div className="flex gap-4">
-          <button
-            onClick={() => handleMethodChange("cache")}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              method === "cache"
-                ? "bg-green-600 text-white"
-                : "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-            }`}
-          >
-            Cache (Backend)
-          </button>
-          <button
-            onClick={() => handleMethodChange("parallel")}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              method === "parallel"
-                ? "bg-blue-600 text-white"
-                : "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-            }`}
-          >
-            Parallel
-          </button>
-          <button
-            onClick={() => handleMethodChange("sequential")}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              method === "sequential"
-                ? "bg-blue-600 text-white"
-                : "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-            }`}
-          >
-            Sequentiell
-          </button>
-        </div>
-
-        {/* Performance Statistiken */}
-        <div className="w-full max-w-2xl p-6 rounded-lg shadow-lg border-2 border-blue-200 dark:border-blue-800">
-          <h2 className="text-xl font-bold text-black dark:text-black">
-            Performance Messungen
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* GET Request Dauer */}
-            <div className="bg-white dark:bg-zinc-900 p-4 rounded-lg">
-              <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">
-                GET alle Pixels (16x16 = 256)
-              </p>
-              <p className="text-2xl font-bold text-black-600 dark:text-white-400">
-                {data ? `${data.duration}ms` : '-'}
-              </p>
-              <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">
-                Methode: {data?.method || '-'}
-              </p>
+      {/* Main Layout */}
+      <div className="max-w-screen-2xl mx-auto p-4 flex gap-4">
+        {/* Sidebar - Team Overview (Competitive Mode) */}
+        {viewMode === "competitive" && (
+          <aside className="w-64 flex-shrink-0 space-y-4">
+            <CompactTeamOverview currentTeamId={selectedTeam} autoRefresh={true} refreshInterval={5000} />
+            
+            {/* Quick Team Controls */}
+            <div className="bg-zinc-900/50 backdrop-blur-sm rounded-lg border border-zinc-700 p-3">
+              <h3 className="text-sm font-bold mb-2">Dein Team</h3>
+              <div className="space-y-2">
+                <input
+                  type="number"
+                  min="0"
+                  max="16"
+                  value={selectedTeam}
+                  onChange={(e) => setSelectedTeam(parseInt(e.target.value) || 0)}
+                  className="w-full px-2 py-1 text-sm bg-zinc-800 border border-zinc-700 rounded text-zinc-100"
+                />
+                <button
+                  onClick={registerTeam}
+                  disabled={registering}
+                  className="w-full px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded transition-colors"
+                >
+                  {registering ? "..." : "Registrieren"}
+                </button>
+              </div>
             </div>
 
-            {/* POST Request Dauer */}
-            <div className="bg-white dark:bg-zinc-900 p-4 rounded-lg">
-              <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">
-                POST einzelnes Pixel
-              </p>
-              <p className="text-2xl font-bold text-white-600 dark:text-white-400">
-                {lastSetPixelDuration !== null ? `${lastSetPixelDuration}ms` : '-'}
-              </p>
-              <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">
-                Letzter Request
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Team Budget & Leaderboard */}
-        <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Team Budget */}
-          <div className="lg:col-span-1">
-            <TeamBudget teamId={selectedTeam} autoRefresh={true} refreshInterval={5000} />
-          </div>
-
-          {/* Leaderboard */}
-          <div className="lg:col-span-2">
-            <Leaderboard autoRefresh={true} refreshInterval={10000} />
-          </div>
-        </div>
-
-        {/* Pixel setzen - Team auswählen */}
-        <div className="w-full max-w-2xl bg-white dark:bg-zinc-900 p-6 rounded-lg shadow-lg">
-          <h2 className="text-2xl font-bold mb-4 text-zinc-900 dark:text-zinc-50">
-            Pixel setzen
-          </h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            Wählen Sie ein Team und klicken Sie auf ein Pixel, um es zu setzen. Die Farbe wird automatisch basierend auf dem Team zugewiesen.
-          </p>
-
-          {/* Team Auswahl */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-              Team (0-16):
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                min="0"
-                max="16"
-                value={selectedTeam}
-                onChange={(e) => setSelectedTeam(parseInt(e.target.value) || 0)}
-                className="flex-1 px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
-              />
+            {/* Auto-Paint Mode */}
+            <div className="bg-zinc-900/50 backdrop-blur-sm rounded-lg border border-zinc-700 p-3">
+              <h3 className="text-sm font-bold mb-2">Auto-Paint Mode</h3>
               <button
-                onClick={registerTeam}
-                disabled={registering}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors whitespace-nowrap"
+                onClick={() => {
+                  setAutoPaintMode(!autoPaintMode);
+                  if (autoPaintMode) {
+                    // Beim Deaktivieren Queue leeren?
+                    if (pixelQueue.length > 0 && !confirm(`${pixelQueue.length} Pixel in Queue. Wirklich abbrechen?`)) {
+                      return;
+                    }
+                    setPixelQueue([]);
+                  }
+                }}
+                className={`w-full px-3 py-2 text-sm rounded transition-colors ${
+                  autoPaintMode 
+                    ? "bg-green-600 hover:bg-green-700 text-white" 
+                    : "bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
+                }`}
               >
-                {registering ? "Registriere..." : "Team Registrieren"}
+                {autoPaintMode ? "🟢 Auto-Paint AN" : "⚫ Auto-Paint AUS"}
               </button>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Wenn "Team X is not registered" erscheint, klicken Sie auf "Team Registrieren"
-            </p>
-          </div>
-
-          {/* Registrierungs-Nachricht */}
-          {registerMessage && (
-            <div className={`mb-4 p-4 rounded-lg border-2 ${
-              registerMessage.includes("✓")
-                ? "bg-blue-50 dark:bg-blue-950 border-blue-500 text-blue-900 dark:text-blue-100"
-                : "bg-red-50 dark:bg-red-950 border-red-500 text-red-900 dark:text-red-100"
-            }`}>
-              <p className="text-sm whitespace-pre-line">{registerMessage}</p>
-            </div>
-          )}
-
-          {/* Status Nachricht */}
-          {setPixelMessage && (
-            <div className={`mt-4 p-4 rounded-lg border-2 ${
-              setPixelMessage.includes("✓")
-                ? "bg-green-50 dark:bg-green-950 border-green-500 text-green-900 dark:text-green-100"
-                : "bg-red-50 dark:bg-red-950 border-red-500 text-red-900 dark:text-red-100"
-            }`}>
-              <div className="font-mono text-sm whitespace-pre-wrap break-all">
-                {setPixelMessage}
-              </div>
-            </div>
-          )}          
-        </div>
-
-        <div className="rounded-lg bg-white p-6 shadow-lg dark:bg-zinc-900 w-full">
-          {loading ? (
-            <div className="flex flex-col items-center gap-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-300 border-t-blue-600"></div>
-              <p className="text-zinc-600 dark:text-zinc-400">
-                Lade Pixels ({method})...
-              </p>
-            </div>
-          ) : error ? (
-            <div className="text-red-600 dark:text-red-400">
-              <p className="font-bold">Fehler beim Laden:</p>
-              <p>{error}</p>
-            </div>
-          ) : data ? (
-            <div className="flex flex-col gap-6">
-              {/* Info Box */}
-              <div className="flex flex-wrap gap-4 justify-center text-sm text-zinc-700 dark:text-zinc-300">
-                <p>
-                  <span className="font-semibold">Methode:</span> {data.method}
-                </p>
-                <p>
-                  <span className="font-semibold">Dauer:</span> {data.duration}ms
-                </p>
-                <p>
-                  <span className="font-semibold">Board:</span> {data.boardSize}x
-                  {data.boardSize}
-                </p>
-              </div>
-
-              {/* Pixel-Info bei Klick */}
-              {selectedPixel && (
-                <div className="p-4 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
-                  <p className="font-semibold text-blue-900 dark:text-blue-100">
-                    Ausgewähltes Pixel:
-                  </p>
-                  <p className="text-blue-800 dark:text-blue-200">
-                    Position: ({selectedPixel.x}, {selectedPixel.y})
-                  </p>
-                  <p className="text-blue-800 dark:text-blue-200">
-                    RGB: ({selectedPixel.color.red}, {selectedPixel.color.green},{" "}
-                    {selectedPixel.color.blue})
-                  </p>
+              
+              {autoPaintMode && (
+                <div className="mt-3 p-2 bg-zinc-800/50 rounded text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Queue:</span>
+                    <span className="font-bold text-blue-400">{pixelQueue.length} Pixel</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Budget:</span>
+                    <span className={`font-bold ${currentBudget > 0 ? "text-green-400" : "text-red-400"}`}>
+                      {currentBudget}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Status:</span>
+                    <span className={`font-bold ${
+                      isProcessingQueue ? "text-yellow-400" : 
+                      pixelQueue.length > 0 && currentBudget > 0 ? "text-green-400" : 
+                      "text-zinc-500"
+                    }`}>
+                      {isProcessingQueue ? "Verarbeitet..." : 
+                       pixelQueue.length > 0 && currentBudget > 0 ? "Läuft" :
+                       pixelQueue.length > 0 ? "Warte auf Budget" :
+                       "Bereit"}
+                    </span>
+                  </div>
+                  {pixelQueue.length > 0 && (
+                    <button
+                      onClick={() => setPixelQueue([])}
+                      className="w-full mt-2 px-2 py-1 bg-red-600/50 hover:bg-red-600 rounded text-xs transition-colors"
+                    >
+                      Queue leeren
+                    </button>
+                  )}
                 </div>
               )}
+              
+              <p className="mt-2 text-xs text-zinc-500">
+                {autoPaintMode 
+                  ? "Klicke Pixel um sie zur Queue zu fügen. Sie werden automatisch eingefärbt sobald Budget verfügbar." 
+                  : "Aktiviere Auto-Paint um mehrere Pixel vorzumerken."}
+              </p>
+            </div>
 
-              {/* Graphische Darstellung des Pixelboards */}
-              <div className="flex justify-center">
+            {/* Stats */}
+            <div className="bg-zinc-900/50 backdrop-blur-sm rounded-lg border border-zinc-700 p-3 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-zinc-400">GET Request</span>
+                <span className="font-mono text-zinc-200">{data?.duration || "-"}ms</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">POST Request</span>
+                <span className="font-mono text-zinc-200">{lastSetPixelDuration !== null ? `${lastSetPixelDuration}ms` : "-"}</span>
+              </div>
+            </div>
+          </aside>
+        )}
+
+        {/* Main Content */}
+        <main className="flex-1 space-y-4">
+          {/* Full Mode - Leaderboard + Controls */}
+          {viewMode === "full" && (
+            <>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-1">
+                  <TeamBudget teamId={selectedTeam} autoRefresh={true} refreshInterval={5000} />
+                </div>
+                <div className="col-span-2">
+                  <Leaderboard autoRefresh={true} refreshInterval={10000} />
+                </div>
+              </div>
+
+              {/* Team Controls + Method Selection */}
+              <div className="bg-zinc-900/50 backdrop-blur-sm rounded-lg border border-zinc-700 p-4">
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Team Selection */}
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Team (0-16):</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        max="16"
+                        value={selectedTeam}
+                        onChange={(e) => setSelectedTeam(parseInt(e.target.value) || 0)}
+                        className="flex-1 px-3 py-2 text-sm bg-zinc-800 border border-zinc-700 rounded text-zinc-100"
+                      />
+                      <button
+                        onClick={registerTeam}
+                        disabled={registering}
+                        className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded transition-colors"
+                      >
+                        {registering ? "..." : "Registrieren"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Method Selection */}
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Lademethode:</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleMethodChange("cache")}
+                        className={`flex-1 px-3 py-2 text-sm rounded transition-colors ${
+                          method === "cache" ? "bg-green-600 text-white" : "bg-zinc-700 hover:bg-zinc-600"
+                        }`}
+                      >
+                        Cache
+                      </button>
+                      <button
+                        onClick={() => handleMethodChange("parallel")}
+                        className={`flex-1 px-3 py-2 text-sm rounded transition-colors ${
+                          method === "parallel" ? "bg-blue-600 text-white" : "bg-zinc-700 hover:bg-zinc-600"
+                        }`}
+                      >
+                        Parallel
+                      </button>
+                      <button
+                        onClick={() => handleMethodChange("sequential")}
+                        className={`flex-1 px-3 py-2 text-sm rounded transition-colors ${
+                          method === "sequential" ? "bg-blue-600 text-white" : "bg-zinc-700 hover:bg-zinc-600"
+                        }`}
+                      >
+                        Sequential
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Performance Stats */}
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div className="bg-zinc-800/50 p-3 rounded">
+                    <p className="text-xs text-zinc-400 mb-1">GET Request (alle Pixels)</p>
+                    <p className="text-lg font-bold">{data?.duration || "-"}ms</p>
+                    <p className="text-xs text-zinc-500">Methode: {data?.method || "-"}</p>
+                  </div>
+                  <div className="bg-zinc-800/50 p-3 rounded">
+                    <p className="text-xs text-zinc-400 mb-1">POST Request (Pixel setzen)</p>
+                    <p className="text-lg font-bold">{lastSetPixelDuration !== null ? `${lastSetPixelDuration}ms` : "-"}</p>
+                  </div>
+                </div>
+
+                {/* Auto-Paint Controls (Full View) */}
+                <div className="mt-4 bg-zinc-800/50 p-3 rounded">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-bold">Auto-Paint Mode</h4>
+                    <button
+                      onClick={() => {
+                        setAutoPaintMode(!autoPaintMode);
+                        if (autoPaintMode && pixelQueue.length > 0) {
+                          if (!confirm(`${pixelQueue.length} Pixel in Queue. Wirklich abbrechen?`)) {
+                            return;
+                          }
+                          setPixelQueue([]);
+                        }
+                      }}
+                      className={`px-4 py-1 text-xs rounded transition-colors ${
+                        autoPaintMode 
+                          ? "bg-green-600 hover:bg-green-700 text-white" 
+                          : "bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
+                      }`}
+                    >
+                      {autoPaintMode ? "🟢 AN" : "⚫ AUS"}
+                    </button>
+                  </div>
+                  
+                  {autoPaintMode && (
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div className="flex justify-between items-center">
+                        <span className="text-zinc-400">Queue:</span>
+                        <span className="font-bold text-blue-400">{pixelQueue.length} px</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-zinc-400">Budget:</span>
+                        <span className={`font-bold ${currentBudget > 0 ? "text-green-400" : "text-red-400"}`}>
+                          {currentBudget}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-zinc-400">Status:</span>
+                        <span className={`font-bold text-xs ${
+                          isProcessingQueue ? "text-yellow-400" : 
+                          pixelQueue.length > 0 && currentBudget > 0 ? "text-green-400" : 
+                          "text-zinc-500"
+                        }`}>
+                          {isProcessingQueue ? "⚙️ Processing" : 
+                           pixelQueue.length > 0 && currentBudget > 0 ? "▶️ Läuft" :
+                           pixelQueue.length > 0 ? "⏸️ Warte" :
+                           "✓ Bereit"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {autoPaintMode && pixelQueue.length > 0 && (
+                    <button
+                      onClick={() => setPixelQueue([])}
+                      className="mt-2 px-3 py-1 bg-red-600/50 hover:bg-red-600 rounded text-xs transition-colors"
+                    >
+                      Queue leeren
+                    </button>
+                  )}
+                  
+                  <p className="mt-2 text-xs text-zinc-500">
+                    {autoPaintMode 
+                      ? "Klicke Pixel um sie zur Queue zu fügen. Sie werden automatisch eingefärbt sobald Budget verfügbar." 
+                      : "Aktiviere Auto-Paint um mehrere Pixel vorzumerken und automatisch einfärben zu lassen."}
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Board */}
+          <div className="bg-zinc-900/50 backdrop-blur-sm rounded-lg border border-zinc-700 p-6">
+            {loading ? (
+              <div className="flex flex-col items-center gap-4 py-12">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-blue-600"></div>
+                <p className="text-zinc-400">Lade Board...</p>
+              </div>
+            ) : error ? (
+              <div className="text-red-400 text-center py-12">
+                <p className="font-bold">Fehler</p>
+                <p>{error}</p>
+              </div>
+            ) : data ? (
+              <div className="flex flex-col items-center gap-4">
                 <div className="board-container">
                   {data.pixels.map((row, x) =>
                     row.map((pixel, y) => (
                       <div
                         key={`${x}-${y}`}
-                        id={`pixel-${x}-${y}`}
                         className="pixel"
                         style={{
                           backgroundColor: `rgb(${pixel.color.red}, ${pixel.color.green}, ${pixel.color.blue})`,
                         }}
                         onClick={() => handlePixelClick(pixel)}
-                        title={`(${pixel.x}, ${pixel.y})`}
                       />
                     ))
                   )}
                 </div>
               </div>
-
-              {/* Textdarstellung */}
-              <details className="border-t pt-4 border-zinc-200 dark:border-zinc-800">
-                <summary className="cursor-pointer font-semibold text-zinc-800 dark:text-zinc-200 mb-2">
-                  Textdarstellung (zum Aufklappen)
-                </summary>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2 max-h-96 overflow-auto">
-                  {data.pixels.flat().map((pixel, index) => (
-                    <div
-                      key={index}
-                      className="text-xs p-2 rounded bg-zinc-100 dark:bg-zinc-800"
-                    >
-                      <p>
-                        <span className="font-semibold">Position:</span> ({pixel.x}
-                        ,{pixel.y})
-                      </p>
-                      <p>
-                        <span className="font-semibold">RGB:</span> (
-                        {pixel.color.red}, {pixel.color.green},{" "}
-                        {pixel.color.blue})
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            </div>
-          ) : (
-            <p className="text-zinc-600 dark:text-zinc-400">Keine Daten</p>
-          )}
-        </div>
-      </main>
+            ) : null}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
