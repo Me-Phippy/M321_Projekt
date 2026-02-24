@@ -39,6 +39,7 @@ export default function Home() {
   const [autoPaintMode, setAutoPaintMode] = useState<boolean>(false);
   const [pixelQueue, setPixelQueue] = useState<Array<{x: number, y: number}>>([]); 
   const [isProcessingQueue, setIsProcessingQueue] = useState<boolean>(false);
+  const [customTeamName, setCustomTeamName] = useState<string>(process.env.NEXT_PUBLIC_TEAM_NAME || "JFPW");
 
   const fetchPixels = (fetchMethod: "parallel" | "sequential" | "cache" = method, showLoading: boolean = true) => {
     if (showLoading) {
@@ -184,8 +185,8 @@ export default function Home() {
     setRegisterMessage(null);
     
     try {
-      // Team-Name: Nutze NEXT_PUBLIC_TEAM_NAME falls gesetzt, sonst "Team {nummer}"
-      const teamName = process.env.NEXT_PUBLIC_TEAM_NAME || `Team ${selectedTeam}`;
+      // Team-Name: Nutze customTeamName, sonst "Team {nummer}"
+      const teamName = customTeamName.trim() || `Team ${selectedTeam}`;
       
       const response = await fetch("/api/register-team", {
         method: "POST",
@@ -221,7 +222,7 @@ export default function Home() {
           }
         }
         
-        const teamName = process.env.NEXT_PUBLIC_TEAM_NAME || `Team ${selectedTeam}`;
+        const teamName = customTeamName.trim() || `Team ${selectedTeam}`;
         let message = `Spieler registriert | ${teamName} registriert`;
         
         // Erfolg wenn beide OK sind ODER bereits registriert
@@ -231,6 +232,24 @@ export default function Home() {
         const teamOkOrRegistered = result.results.team.ok || 
           result.results.team.response?.includes("already registered") ||
           result.results.team.status === 409;
+        
+        // Wenn erfolgreich registriert, setze auch Teamnamen auf Server
+        if (playerOkOrRegistered && teamOkOrRegistered) {
+          try {
+            const nameResponse = await fetch("/api/update-team-name", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ teamName }),
+            });
+            const nameResult = await nameResponse.json();
+            if (nameResult.success) {
+              console.log(`✓ Teamname auf Server gesetzt: ${teamName}`);
+              message += ` | Name: ${teamName}`;
+            }
+          } catch (err) {
+            console.error("Teamname konnte nicht gesetzt werden:", err);
+          }
+        }
         
         setRegisterMessage(message);
         setRegisterMessageType(playerOkOrRegistered && teamOkOrRegistered ? "success" : "info");
@@ -250,6 +269,12 @@ export default function Home() {
   useEffect(() => {
     // Initial fetch
     fetchPixels(method);
+
+    // Auto-Refresh: Lade regelmäßig vom Backend (zusätzlich zu SSE)
+    const refreshInterval = setInterval(() => {
+      console.log("Auto-Refresh: Lade Pixel-Daten vom Backend...");
+      fetchPixels(method, false); // false = kein Loading-Spinner
+    }, 500); // Alle 500ms (0.5 Sekunden) - sehr schnell!
 
     // SSE-Verbindung aufbauen
     console.log("Baue SSE-Verbindung auf...");
@@ -321,10 +346,11 @@ export default function Home() {
       setError("SSE-Verbindung unterbrochen");
     };
 
-    // Cleanup: Verbindung schließen beim Unmount
+    // Cleanup: Verbindung schließen und Interval stoppen beim Unmount
     return () => {
-      console.log("Schließe SSE-Verbindung");
+      console.log("Schließe SSE-Verbindung und Auto-Refresh");
       eventSource.close();
+      clearInterval(refreshInterval);
     };
   }, []);
 
@@ -595,6 +621,49 @@ export default function Home() {
                 >
                   {registering ? "..." : "Registrieren"}
                 </button>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customTeamName}
+                    onChange={(e) => setCustomTeamName(e.target.value)}
+                    placeholder="Teamname"
+                    className="flex-1 px-2 py-1 text-xs bg-zinc-800 border border-zinc-700 rounded text-zinc-100"
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!customTeamName.trim()) {
+                        setRegisterMessage("Teamname darf nicht leer sein");
+                        setRegisterMessageType("error");
+                        setTimeout(() => setRegisterMessage(null), 3000);
+                        return;
+                      }
+                      try {
+                        const response = await fetch("/api/update-team-name", {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ teamName: customTeamName }),
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                          setRegisterMessage(`Teamname → ${customTeamName}`);
+                          setRegisterMessageType("success");
+                          setTimeout(() => setRegisterMessage(null), 3000);
+                        } else {
+                          setRegisterMessage(`Name-Update fehlgeschlagen`);
+                          setRegisterMessageType("error");
+                          setTimeout(() => setRegisterMessage(null), 5000);
+                        }
+                      } catch (err) {
+                        setRegisterMessage(`Fehler: ${String(err)}`);
+                        setRegisterMessageType("error");
+                        setTimeout(() => setRegisterMessage(null), 5000);
+                      }
+                    }}
+                    className="px-3 py-1 text-xs bg-green-600 hover:bg-green-700 rounded transition-colors whitespace-nowrap"
+                  >
+                    Update
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -713,6 +782,49 @@ export default function Home() {
                         className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded transition-colors"
                       >
                         {registering ? "..." : "Registrieren"}
+                      </button>
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <input
+                        type="text"
+                        value={customTeamName}
+                        onChange={(e) => setCustomTeamName(e.target.value)}
+                        placeholder="Teamname eingeben"
+                        className="flex-1 px-3 py-2 text-sm bg-zinc-800 border border-zinc-700 rounded text-zinc-100"
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!customTeamName.trim()) {
+                            setRegisterMessage("Teamname darf nicht leer sein");
+                            setRegisterMessageType("error");
+                            setTimeout(() => setRegisterMessage(null), 3000);
+                            return;
+                          }
+                          try {
+                            const response = await fetch("/api/update-team-name", {
+                              method: "PUT",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ teamName: customTeamName }),
+                            });
+                            const result = await response.json();
+                            if (result.success) {
+                              setRegisterMessage(`Teamname → ${customTeamName}`);
+                              setRegisterMessageType("success");
+                              setTimeout(() => setRegisterMessage(null), 3000);
+                            } else {
+                              setRegisterMessage(`Name-Update fehlgeschlagen`);
+                              setRegisterMessageType("error");
+                              setTimeout(() => setRegisterMessage(null), 5000);
+                            }
+                          } catch (err) {
+                            setRegisterMessage(`Fehler: ${String(err)}`);
+                            setRegisterMessageType("error");
+                            setTimeout(() => setRegisterMessage(null), 5000);
+                          }
+                        }}
+                        className="px-4 py-2 text-sm bg-green-600 hover:bg-green-700 rounded transition-colors"
+                      >
+                        Update Name
                       </button>
                     </div>
                   </div>
