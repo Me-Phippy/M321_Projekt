@@ -375,9 +375,8 @@ export default function Home() {
       }
     };
     
-    // Kurze Verzögerung zwischen Pixels um Server nicht zu überlasten
-    const timeout = setTimeout(processQueue, 500);
-    return () => clearTimeout(timeout);
+    // Sofort verarbeiten (kein Delay mehr!)
+    processQueue();
   }, [autoPaintMode, pixelQueue, isProcessingQueue, currentBudget, teamInfo, selectedTeam]);
 
   // Redirect to login if not authenticated
